@@ -321,6 +321,11 @@ pub struct PlacedSlot<'a> {
     pub note: &'a str,
     /// The station's drill is flipped (already applied to `slot.xf`).
     pub flip: bool,
+    /// The number shown on the rink and beside the drill's text: 1, 2, 3…
+    /// over the stations that have a drill, in station order. `None` for an
+    /// empty station, and when only one station has a drill (nothing to tell
+    /// apart).
+    pub number: Option<usize>,
 }
 
 impl Plan {
@@ -352,7 +357,8 @@ impl Plan {
     }
 
     pub fn slots<'a>(&'a self, seg: &'a Segment) -> Vec<PlacedSlot<'a>> {
-        seg.layout
+        let mut placed: Vec<PlacedSlot<'a>> = seg
+            .layout
             .slots()
             .into_iter()
             .enumerate()
@@ -365,9 +371,19 @@ impl Plan {
                     drill: st.and_then(|s| self.drills.get(&s.drill_id)),
                     note: st.map(|s| s.note.as_str()).unwrap_or(""),
                     flip,
+                    number: None,
                 }
             })
-            .collect()
+            .collect();
+        // Number the stations with drills 1, 2, 3… (skipping empty ones).
+        if placed.iter().filter(|p| p.drill.is_some()).count() > 1 {
+            let mut next = 0;
+            for p in placed.iter_mut().filter(|p| p.drill.is_some()) {
+                next += 1;
+                p.number = Some(next);
+            }
+        }
+        placed
     }
 
     /// Equipment for one segment: every station's needs added up.

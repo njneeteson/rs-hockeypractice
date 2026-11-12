@@ -87,6 +87,9 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
                 );
                 centre_note(&mut out, p.slot.area, &msg, c::RED);
             }
+            // An empty zone is labelled only in the builder (where it is a
+            // place to drop a drill); the printed sheet leaves it blank.
+            None if !interactive => {}
             None => {
                 // Narrow slots (the 25 ft neutral strip) just say "Open".
                 let msg = if p.slot.area.w < 40.0 {
@@ -107,21 +110,21 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
             .goalies
             .map(|g| g.diagram().points())
             .unwrap_or_default();
+        // Only stations with a drill get a number (see `PlacedSlot::number`).
         for p in &placed {
-            let mut busy: Vec<(f32, f32)> = p
-                .drill
-                .map(|d| {
-                    d.diagram
-                        .points()
-                        .into_iter()
-                        .map(|(x, y)| p.slot.xf.apply(x, y))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let (Some(number), Some(d)) = (p.number, p.drill) else {
+                continue;
+            };
+            let mut busy: Vec<(f32, f32)> = d
+                .diagram
+                .points()
+                .into_iter()
+                .map(|(x, y)| p.slot.xf.apply(x, y))
+                .collect();
             busy.extend(&taken);
             let (x, y) = badge_spot(p.slot.area, &busy);
             taken.push((x, y));
-            badge(&mut out, x, y, p.index + 1);
+            badge(&mut out, x, y, number);
         }
     }
 
@@ -240,7 +243,8 @@ fn dividers(out: &mut String, ice: PracticeIce, areas: impl Iterator<Item = Rect
     if !d.is_empty() {
         let _ = write!(
             out,
-            r#"<path class="b-divider" d="{}" fill="none" stroke="{}" stroke-width="0.6" stroke-dasharray="2.5 1.5"/>"#,
+            // Light and thin, so the blue and red lines show through.
+            r#"<path class="b-divider" d="{}" fill="none" stroke="{}" stroke-width="0.35" stroke-opacity="0.55" stroke-dasharray="1.6 1.2"/>"#,
             d.trim_end(),
             c::SLOT
         );

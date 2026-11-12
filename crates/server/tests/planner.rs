@@ -242,8 +242,14 @@ async fn practices_are_built_and_printed() {
         app.get(r.redirect())
             .await
             .body
-            .contains("Placed “Corner battles” in station 3.")
+            .contains("Placed “Corner battles” in the right half, bottom lane.")
     );
+    // Drills in the first and third zones, the middle one empty: numbered 1
+    // and 2 on the rink and in the station list, with no marker on the gap.
+    let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    assert_eq!(page.matches("class=\"b-badge\"").count(), 2, "rink markers");
+    assert!(page.contains("aria-label=\"Station 2\""));
+    assert!(!page.contains("aria-label=\"Station 3\""));
     app.post(&format!("{}/note", place(2)), &[("note", "Coach Pat")])
         .await;
 

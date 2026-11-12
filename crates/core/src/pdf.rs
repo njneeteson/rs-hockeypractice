@@ -202,13 +202,13 @@ fn drill_lines(plan: &Plan, seg: &Segment, size: f32, col_w: f32) -> Vec<Line> {
         if !lines.is_empty() {
             push(&mut lines, Kind::Gap, String::new(), size * 1.1, false);
         }
-        let indent = if many { size * 2.0 } else { 0.0 };
+        let indent = if p.number.is_some() { size * 2.0 } else { 0.0 };
         let hsize = size * 1.25;
         for (i, l) in wrap(&d.name, hsize, true, col_w - indent)
             .into_iter()
             .enumerate()
         {
-            let badge = (i == 0 && many).then_some(p.index + 1);
+            let badge = p.number.filter(|_| i == 0);
             push(&mut lines, Kind::Heading(badge), l, hsize * 1.3, true);
         }
         let mut sub = vec![format!("{} min", d.minutes), d.category.label().to_string()];

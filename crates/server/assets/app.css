@@ -983,6 +983,32 @@ html:not(.js) .js-only {
   pointer-events: none;
 }
 
+/* The box dragged on empty ice to select several items. */
+.editor-canvas .marquee {
+  fill: var(--accent);
+  fill-opacity: 0.08;
+  stroke: var(--accent);
+  stroke-width: 0.3;
+  stroke-dasharray: 0.8 0.5;
+  pointer-events: none;
+}
+
+/* Zoomed in: the rink is a window you can scroll or drag (Space) around. */
+.editor-canvas.can-pan,
+.editor-canvas.can-pan * {
+  cursor: grab !important;
+}
+
+.editor-canvas.panning,
+.editor-canvas.panning * {
+  cursor: grabbing !important;
+}
+
+.tool.zoom-level {
+  min-width: 3.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .editor-canvas .rot-handle path {
   stroke: var(--accent);
   stroke-width: 0.3;

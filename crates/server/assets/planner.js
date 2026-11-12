@@ -721,6 +721,10 @@ function lengthOf(pts) {
 }
 
 let activeEditor = null;
+// Copied diagram items ({ items, pastes }), shared across editors. It lives
+// in memory only (not browser storage), and survives moving between drills
+// because the app swaps pages in place.
+let clipboard = null;
 
 function setUpEditor(root) {
   if (root.dataset.ready) {
@@ -746,10 +750,20 @@ function setUpEditor(root) {
     state = { items: [] };
   }
   let tool = { kind: "select" };
-  let selected = -1;
+  // The selection: indices into state.items.
+  let sel = [];
+  const isSel = (i) => sel.includes(i);
+  // Moving the selection: { start, originals, moved }.
   let drag = null;
   // Turning an item with its handle: { item }.
   let spin = null;
+  // Selecting with a box dragged on empty ice: { start, end, base }.
+  let marquee = null;
+  // Panning a zoomed-in view: { start, view }.
+  let pan = null;
+  let spaceHeld = false;
+  // Zoom: 1 shows the whole frame; the view is a window onto it.
+  let view = null;
   let draft = null;
   const history = [];
 
@@ -786,8 +800,117 @@ function setUpEditor(root) {
     const [x, y, w, h] = frames[sizeKey()];
     return { x: x + 1.5, y: y + 1.5, w: w - 3, h: h - 3 };
   };
-  const setView = () => svg.setAttribute("viewBox", frames[sizeKey()].join(" "));
   const keep = (v, lo, hi) => Math.round(Math.min(Math.max(v, lo), hi) * 10) / 10;
+  const clampTo = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+
+  // ---- Zoom and pan: the viewBox is a window onto the frame.
+  const MAX_ZOOM = 8;
+  const zoomLabel = root.querySelector("[data-zoom-level]");
+  function showView() {
+    const [fx, fy, fw, fh] = frames[sizeKey()];
+    if (!view) {
+      view = { x: fx, y: fy, w: fw, h: fh };
+    }
+    // Keep the window inside the frame.
+    view.w = clampTo(view.w, fw / MAX_ZOOM, fw);
+    view.h = (view.w / fw) * fh;
+    view.x = clampTo(view.x, fx, fx + fw - view.w);
+    view.y = clampTo(view.y, fy, fy + fh - view.h);
+    svg.setAttribute("viewBox", [view.x, view.y, view.w, view.h].join(" "));
+    const z = fw / view.w;
+    canvas.classList.toggle("zoomed", z > 1.01);
+    if (zoomLabel) {
+      zoomLabel.textContent = `${Math.round(z * 100)}%`;
+    }
+  }
+  const setView = () => {
+    view = null;
+    showView();
+  };
+  // Zoom by `factor` (>1 zooms in) keeping the rink point (cx, cy) in place.
+  function zoomBy(factor, cx, cy) {
+    if (cx === undefined) {
+      cx = view.x + view.w / 2;
+      cy = view.y + view.h / 2;
+    }
+    const w = view.w / factor;
+    const h = view.h / factor;
+    view = {
+      x: cx - ((cx - view.x) * w) / view.w,
+      y: cy - ((cy - view.y) * h) / view.h,
+      w,
+      h,
+    };
+    showView();
+  }
+
+  // ---- Selection helpers.
+  const pointsOf = (item) => (item.t === "line" ? item.pts : [[item.x, item.y]]);
+  function bounds(items) {
+    const pts = items.flatMap(pointsOf);
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+  }
+  // A copy of `item` moved by (dx, dy), each point kept on the drawable area.
+  function shifted(item, dx, dy) {
+    const f = frame();
+    const out = JSON.parse(JSON.stringify(item));
+    if (out.t === "line") {
+      out.pts = out.pts.map(([x, y]) => [keep(x + dx, f.x, f.x + f.w), keep(y + dy, f.y, f.y + f.h)]);
+    } else {
+      out.x = keep(out.x + dx, f.x, f.x + f.w);
+      out.y = keep(out.y + dy, f.y, f.y + f.h);
+    }
+    return out;
+  }
+  // How far a group can move by (dx, dy) and still stay on the drawable area.
+  function allowedShift(items, dx, dy) {
+    const f = frame();
+    const b = bounds(items);
+    return [
+      clampTo(dx, f.x - b.x0, f.x + f.w - b.x1),
+      clampTo(dy, f.y - b.y0, f.y + f.h - b.y1),
+    ];
+  }
+  // Copies of `items` moved by (dx, dy), as a group, onto the drawable area.
+  function placed(items, dx, dy) {
+    const [ax, ay] = allowedShift(items, dx, dy);
+    return items.map((item) => shifted(item, ax, ay));
+  }
+  // Turn `items` as a group by `deg` about their middle.
+  function turned(items, deg) {
+    const b = bounds(items);
+    const cx = (b.x0 + b.x1) / 2;
+    const cy = (b.y0 + b.y1) / 2;
+    const r = (deg * Math.PI) / 180;
+    const [s, c] = [Math.sin(r), Math.cos(r)];
+    const f = frame();
+    const at = ([x, y]) => [
+      keep(cx + (x - cx) * c - (y - cy) * s, f.x, f.x + f.w),
+      keep(cy + (x - cx) * s + (y - cy) * c, f.y, f.y + f.h),
+    ];
+    return items.map((item) => {
+      const out = JSON.parse(JSON.stringify(item));
+      if (out.t === "line") {
+        out.pts = out.pts.map(at);
+      } else {
+        [out.x, out.y] = at([out.x, out.y]);
+        if (ROTATABLE.has(out.t)) {
+          out.rot = ((((out.rot || 0) + deg) % 360) + 360) % 360;
+        }
+      }
+      return out;
+    });
+  }
+  // Add `items` to the drawing and select them.
+  function addAll(items) {
+    change(() => {
+      const start = state.items.length;
+      state.items.push(...items);
+      sel = items.map((_, k) => start + k);
+    });
+  }
 
   function rawPoint(event) {
     const pt = svg.createSVGPoint();
@@ -827,18 +950,31 @@ function setUpEditor(root) {
         overlay.innerHTML = `<g class="draft">${drawLine(draft.style, draft.end, pts)}</g>`;
       }
     }
-    if (selected >= 0) {
-      const g = layer.querySelector(`[data-i="${selected}"]`);
+    const box = (cls, x, y, w, h) => {
+      const r = document.createElementNS(SVG_NS, "rect");
+      r.setAttribute("class", cls);
+      r.setAttribute("x", x);
+      r.setAttribute("y", y);
+      r.setAttribute("width", w);
+      r.setAttribute("height", h);
+      overlay.append(r);
+    };
+    for (const i of sel) {
+      const g = layer.querySelector(`[data-i="${i}"]`);
       if (g) {
         const b = g.getBBox();
-        const box = document.createElementNS(SVG_NS, "rect");
-        box.setAttribute("class", "sel-box");
-        box.setAttribute("x", b.x - 1);
-        box.setAttribute("y", b.y - 1);
-        box.setAttribute("width", b.width + 2);
-        box.setAttribute("height", b.height + 2);
-        overlay.append(box);
-        const item = state.items[selected];
+        box("sel-box", b.x - 1, b.y - 1, b.width + 2, b.height + 2);
+      }
+    }
+    if (marquee) {
+      const [x0, y0] = marquee.start;
+      const [x1, y1] = marquee.end;
+      box("marquee", Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+    }
+    if (sel.length === 1) {
+      const g = layer.querySelector(`[data-i="${sel[0]}"]`);
+      if (g) {
+        const item = state.items[sel[0]];
         if (item && ROTATABLE.has(item.t)) {
           const [hx, hy] = handleAt(item);
           const g2 = document.createElementNS(SVG_NS, "g");
@@ -852,13 +988,26 @@ function setUpEditor(root) {
     }
   }
 
-  // Turn the selected item by `by` degrees, onto a multiple of `by`.
+  // Turn by `by` degrees: one net, barrier or dangler turns in place (onto a
+  // multiple of `by`); a group turns as a whole about its middle.
   function turn(by) {
-    const item = state.items[selected];
-    if (item && ROTATABLE.has(item.t)) {
+    if (sel.length === 1) {
+      const item = state.items[sel[0]];
+      if (item && ROTATABLE.has(item.t)) {
+        change(() => {
+          const next = Math.round(((item.rot || 0) + by) / by) * by;
+          item.rot = ((next % 360) + 360) % 360;
+        });
+      }
+    } else if (sel.length > 1) {
       change(() => {
-        const next = Math.round(((item.rot || 0) + by) / by) * by;
-        item.rot = ((next % 360) + 360) % 360;
+        const out = turned(
+          sel.map((i) => state.items[i]),
+          by,
+        );
+        sel.forEach((i, k) => {
+          state.items[i] = out[k];
+        });
       });
     }
   }
@@ -878,7 +1027,7 @@ function setUpEditor(root) {
     canvas.dataset.mode = tool.kind;
     draft = null;
     if (tool.kind !== "select") {
-      selected = -1;
+      sel = [];
     }
     render();
   }
@@ -915,11 +1064,80 @@ function setUpEditor(root) {
 
   const actions = {
     delete() {
-      if (selected >= 0) {
-        const i = selected;
-        selected = -1;
-        change(() => state.items.splice(i, 1));
+      if (!sel.length) {
+        return false;
       }
+      const gone = new Set(sel);
+      sel = [];
+      change(() => {
+        state.items = state.items.filter((_, i) => !gone.has(i));
+      });
+      return true;
+    },
+    // The clipboard is shared by every editor on the page and survives moving
+    // between drills in the app, so pieces can be copied from one drill to another.
+    copy() {
+      if (!sel.length) {
+        return false;
+      }
+      clipboard = { items: sel.map((i) => JSON.parse(JSON.stringify(state.items[i]))), pastes: 0 };
+      return true;
+    },
+    cut() {
+      return actions.copy() && actions.delete();
+    },
+    // Each paste lands 3 ft further down and right, so copies don't stack.
+    paste() {
+      if (!clipboard || !clipboard.items.length) {
+        return false;
+      }
+      clipboard.pastes += 1;
+      const d = 3 * clipboard.pastes;
+      addAll(placed(clipboard.items, d, d));
+      return true;
+    },
+    duplicate() {
+      if (!sel.length) {
+        return false;
+      }
+      addAll(
+        placed(
+          sel.map((i) => state.items[i]),
+          3,
+          3,
+        ),
+      );
+      return true;
+    },
+    selectAll() {
+      if (tool.kind !== "select") {
+        setTool(root.querySelector('[data-tool="select"]'));
+      }
+      sel = state.items.map((_, i) => i);
+      render();
+      return true;
+    },
+    nudge(dx, dy) {
+      if (!sel.length) {
+        return false;
+      }
+      change(() => {
+        const items = sel.map((i) => state.items[i]);
+        const out = placed(items, dx, dy);
+        sel.forEach((i, k) => {
+          state.items[i] = out[k];
+        });
+      });
+      return true;
+    },
+    zoomIn() {
+      zoomBy(1.5);
+    },
+    zoomOut() {
+      zoomBy(1 / 1.5);
+    },
+    zoomFit() {
+      setView();
     },
     rotateRight() {
       turn(15);
@@ -930,14 +1148,14 @@ function setUpEditor(root) {
     undo() {
       if (history.length) {
         state = JSON.parse(history.pop());
-        selected = -1;
+        sel = [];
         save();
         render();
       }
     },
     clear() {
       if (state.items.length && window.confirm("Remove everything from the diagram?")) {
-        selected = -1;
+        sel = [];
         change(() => {
           state.items = [];
         });
@@ -946,7 +1164,8 @@ function setUpEditor(root) {
     finish: finishDraft,
     cancel() {
       draft = null;
-      selected = -1;
+      marquee = null;
+      sel = [];
       render();
     },
     selectTool() {
@@ -967,25 +1186,54 @@ function setUpEditor(root) {
   });
 
   svg.addEventListener("pointerdown", (event) => {
+    activeEditor = editor;
+    // Pan a zoomed-in view: middle button, or Space held while dragging.
+    if (event.button === 1 || (event.button === 0 && spaceHeld)) {
+      event.preventDefault();
+      pan = { start: [event.clientX, event.clientY], view: { ...view } };
+      canvas.classList.add("panning");
+      capture(event);
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
-    activeEditor = editor;
     const p = point(event);
     const [x, y] = p;
-    if (tool.kind === "select" && selected >= 0 && event.target.closest(".rot-handle")) {
+    if (tool.kind === "select" && sel.length === 1 && event.target.closest(".rot-handle")) {
       remember();
-      spin = { item: state.items[selected] };
+      spin = { item: state.items[sel[0]] };
       capture(event);
       return;
     }
     if (tool.kind === "select") {
       const g = event.target.closest("[data-i]");
-      selected = g ? Number(g.dataset.i) : -1;
+      const additive = event.shiftKey || event.ctrlKey || event.metaKey;
       if (g) {
-        drag = { start: p, original: JSON.stringify(state.items[selected]), moved: false };
-        capture(event);
+        const i = Number(g.dataset.i);
+        if (additive) {
+          // Shift/Ctrl-click adds or removes one item.
+          sel = isSel(i) ? sel.filter((j) => j !== i) : sel.concat([i]);
+          render();
+          return;
+        }
+        if (!isSel(i)) {
+          sel = [i];
+        }
+        // Drag moves everything selected.
+        drag = {
+          start: p,
+          originals: sel.map((j) => JSON.parse(JSON.stringify(state.items[j]))),
+          moved: false,
+        };
+      } else {
+        // Empty ice: drag out a box to select what it touches.
+        marquee = { start: p, end: p, base: additive ? sel.slice() : [] };
+        if (!additive) {
+          sel = [];
+        }
       }
+      capture(event);
       render();
       return;
     }
@@ -1034,6 +1282,22 @@ function setUpEditor(root) {
   });
 
   svg.addEventListener("pointermove", (event) => {
+    if (pan) {
+      // Screen pixels to rink feet at the current zoom.
+      const scale = pan.view.w / svg.getBoundingClientRect().width;
+      view = {
+        ...pan.view,
+        x: pan.view.x - (event.clientX - pan.start[0]) * scale,
+        y: pan.view.y - (event.clientY - pan.start[1]) * scale,
+      };
+      showView();
+      return;
+    }
+    if (marquee) {
+      marquee.end = point(event);
+      render();
+      return;
+    }
     if (spin) {
       const p = rawPoint(event);
       const deg = (Math.atan2(p.y - spin.item.y, p.x - spin.item.x) * 180) / Math.PI;
@@ -1042,7 +1306,7 @@ function setUpEditor(root) {
       render();
       return;
     }
-    if (drag && selected >= 0) {
+    if (drag && sel.length) {
       const p = point(event);
       const dx = p[0] - drag.start[0];
       const dy = p[1] - drag.start[1];
@@ -1053,18 +1317,11 @@ function setUpEditor(root) {
         remember();
         drag.moved = true;
       }
-      const moved = JSON.parse(drag.original);
-      const f = frame();
-      if (moved.t === "line") {
-        moved.pts = moved.pts.map(([px, py]) => [
-          keep(px + dx, f.x, f.x + f.w),
-          keep(py + dy, f.y, f.y + f.h),
-        ]);
-      } else {
-        moved.x = keep(moved.x + dx, f.x, f.x + f.w);
-        moved.y = keep(moved.y + dy, f.y, f.y + f.h);
-      }
-      state.items[selected] = moved;
+      // The group moves together and stops at the edge of the ice.
+      const out = placed(drag.originals, dx, dy);
+      sel.forEach((i, k) => {
+        state.items[i] = out[k];
+      });
       render();
     } else if (draft) {
       const p = point(event);
@@ -1081,6 +1338,35 @@ function setUpEditor(root) {
   });
 
   svg.addEventListener("pointerup", () => {
+    if (pan) {
+      pan = null;
+      canvas.classList.remove("panning");
+      return;
+    }
+    if (marquee) {
+      const [x0, y0] = marquee.start;
+      const [x1, y1] = marquee.end;
+      const r = {
+        x0: Math.min(x0, x1),
+        y0: Math.min(y0, y1),
+        x1: Math.max(x0, x1),
+        y1: Math.max(y0, y1),
+      };
+      const hits = [];
+      if (r.x1 - r.x0 > 0.5 || r.y1 - r.y0 > 0.5) {
+        for (const g of layer.querySelectorAll("[data-i]")) {
+          const b = g.getBBox();
+          const touches = b.x <= r.x1 && b.x + b.width >= r.x0 && b.y <= r.y1 && b.y + b.height >= r.y0;
+          if (touches) {
+            hits.push(Number(g.dataset.i));
+          }
+        }
+      }
+      sel = [...new Set(marquee.base.concat(hits))];
+      marquee = null;
+      render();
+      return;
+    }
     if (spin) {
       spin = null;
       save();
@@ -1117,6 +1403,26 @@ function setUpEditor(root) {
     }
   });
 
+  // Ctrl + wheel (or a trackpad pinch) zooms about the pointer; when zoomed
+  // in, the plain wheel scrolls around the rink instead of the page.
+  svg.addEventListener(
+    "wheel",
+    (event) => {
+      const [, , fw] = frames[sizeKey()];
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const p = rawPoint(event);
+        zoomBy(Math.exp(-event.deltaY * 0.002), p.x, p.y);
+      } else if (view.w < fw - 0.01) {
+        event.preventDefault();
+        const scale = view.w / svg.getBoundingClientRect().width;
+        view = { ...view, x: view.x + event.deltaX * scale, y: view.y + event.deltaY * scale };
+        showView();
+      }
+    },
+    { passive: false },
+  );
+
   for (const select of [areaSelect, lanesSelect]) {
     select.addEventListener("change", () => {
       syncLanes();
@@ -1126,7 +1432,34 @@ function setUpEditor(root) {
   }
   syncLanes();
 
-  const editor = { root, actions, isDrawing: () => Boolean(draft) };
+  // Whether the coach is working in this editor (last clicked in it), so
+  // shortcuts like Ctrl+A and Ctrl+C don't take over the rest of the page.
+  let focused = false;
+  let hovering = false;
+  document.addEventListener("pointerdown", (event) => {
+    // The path, not the target: clicking an item redraws the diagram, so the
+    // clicked element may already be gone from the page.
+    focused = event.composedPath().includes(root);
+  });
+  canvas.addEventListener("pointerenter", () => {
+    hovering = true;
+  });
+  canvas.addEventListener("pointerleave", () => {
+    hovering = false;
+  });
+
+  const editor = {
+    root,
+    actions,
+    isDrawing: () => Boolean(draft),
+    hasSelection: () => sel.length > 0,
+    isFocused: () => focused,
+    isHovered: () => hovering,
+    setSpace(held) {
+      spaceHeld = held;
+      canvas.classList.toggle("can-pan", held);
+    },
+  };
   activeEditor = editor;
   setView();
   save();
@@ -1140,13 +1473,38 @@ document.addEventListener("keydown", (event) => {
   if (event.target.closest && event.target.closest("input, select, textarea, [contenteditable]")) {
     return;
   }
-  const { actions } = activeEditor;
+  const editor = activeEditor;
+  const { actions } = editor;
   const key = event.key.toLowerCase();
-  if ((event.ctrlKey || event.metaKey) && key === "z") {
+  const ctrl = event.ctrlKey || event.metaKey;
+  // Copy, cut, paste, duplicate and select all only when working in the
+  // editor, so they don't take over the rest of the page.
+  const clipKeys = { c: "copy", x: "cut", v: "paste", d: "duplicate", a: "selectAll" };
+  const nudges = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
+  if (ctrl && key === "z") {
     event.preventDefault();
     actions.undo();
+  } else if (ctrl && clipKeys[key]) {
+    if (editor.isFocused() && actions[clipKeys[key]]()) {
+      event.preventDefault();
+    }
   } else if (event.ctrlKey || event.metaKey || event.altKey) {
     return;
+  } else if (key === " " && (editor.isHovered() || editor.isFocused())) {
+    // Hold Space and drag to pan.
+    event.preventDefault();
+    editor.setSpace(true);
+  } else if (nudges[key] && editor.isFocused() && editor.hasSelection()) {
+    // Arrows nudge the selection 1 ft (Shift: 5 ft).
+    event.preventDefault();
+    const step = event.shiftKey ? 5 : 1;
+    actions.nudge(nudges[key][0] * step, nudges[key][1] * step);
+  } else if ((key === "+" || key === "=") && editor.isFocused()) {
+    actions.zoomIn();
+  } else if (key === "-" && editor.isFocused()) {
+    actions.zoomOut();
+  } else if (key === "0" && editor.isFocused()) {
+    actions.zoomFit();
   } else if (key === "delete" || key === "backspace") {
     event.preventDefault();
     actions.delete();
@@ -1163,6 +1521,12 @@ document.addEventListener("keydown", (event) => {
     }
   } else if (key === "v") {
     actions.selectTool();
+  }
+});
+
+document.addEventListener("keyup", (event) => {
+  if (event.key === " " && activeEditor && activeEditor.setSpace) {
+    activeEditor.setSpace(false);
   }
 });
 

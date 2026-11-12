@@ -203,7 +203,21 @@ async fn place(
         .db(move |db| {
             db.set_station(sid, slot, drill_id, &f.note)?;
             let name = db.drill(drill_id)?.map(|d| d.name).unwrap_or_default();
-            Ok(format!("Placed “{name}” in station {}.", slot + 1))
+            // Name the zone ("the right half, top lane"): station numbers
+            // count only the zones with drills, so they shift as drills come and go.
+            let slots = db
+                .segment(sid)?
+                .map(|s| s.layout.slots())
+                .unwrap_or_default();
+            let zone = match slots.get(slot) {
+                Some(s) if slots.len() > 1 => s.name.to_lowercase(),
+                _ => String::new(),
+            };
+            Ok(if zone.is_empty() {
+                format!("Placed “{name}”.")
+            } else {
+                format!("Placed “{name}” in the {zone}.")
+            })
         })
         .await;
     Ok(flash::report(&cx.st, &to, result))

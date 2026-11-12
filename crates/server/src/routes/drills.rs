@@ -152,10 +152,14 @@ async fn add_samples(cx: Ctx) -> AppResult<Response> {
 // ---- Editor -------------------------------------------------------------------
 
 const DIAGRAM_HELP: &str = "Pick a tool, then click the rink. For lines, drag to draw a curve, or \
-    click several points and double-click (or press Enter) to finish. With Select, drag items to \
-    move them; Delete removes the selected item; double-click text to edit it. Nets, barriers \
-    and danglers turn with the round handle, the ⟲ ⟳ buttons, or R / Shift+R (15° steps; hold \
-    Shift while dragging the handle to turn freely). A net dropped near a goal line snaps onto it.";
+    click several points and double-click (or press Enter) to finish. With Select, click an item \
+    or drag a box on empty ice to select several (Shift or Ctrl+click adds or removes one, Ctrl+A \
+    selects all); drag to move them together, arrow keys nudge (Shift: 5 ft), Delete removes \
+    them; double-click text to edit it. Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+D copy, cut, paste and \
+    duplicate, also between drills. Nets, barriers and danglers turn with the round handle; ⟲ ⟳ \
+    or R / Shift+R turn the selection 15° (hold Shift on the handle to turn freely). A net dropped \
+    near a goal line snaps onto it. Zoom with + / − (or Ctrl + mouse wheel, 0 to fit); when \
+    zoomed in, scroll or hold Space and drag to move around.";
 
 /// The browser drawing editor (shown only with JavaScript) and its no-JS fallback.
 fn diagram_editor(ice: IceSize, diagram: &Diagram, name: &str) -> Markup {
@@ -221,11 +225,19 @@ fn diagram_editor(ice: IceSize, diagram: &Diagram, name: &str) -> Markup {
                     }
                 }
                 div class="tool-group" {
-                    button type="button" class="tool" data-action="rotateLeft" title="Turn the selected net, barrier or dangler left (Shift+R)" { "⟲" }
-                    button type="button" class="tool" data-action="rotateRight" title="Turn the selected net, barrier or dangler right (R)" { "⟳" }
-                    button type="button" class="tool" data-action="delete" title="Delete the selected item (Del)" { "🗑" }
+                    button type="button" class="tool" data-action="rotateLeft" title="Turn the selection left (Shift+R)" { "⟲" }
+                    button type="button" class="tool" data-action="rotateRight" title="Turn the selection right (R)" { "⟳" }
+                    button type="button" class="tool" data-action="copy" title="Copy the selection (Ctrl+C)" { "Copy" }
+                    button type="button" class="tool" data-action="paste" title="Paste (Ctrl+V)" { "Paste" }
+                    button type="button" class="tool" data-action="duplicate" title="Duplicate the selection (Ctrl+D)" { "⧉" }
+                    button type="button" class="tool" data-action="delete" title="Delete the selection (Del)" { "🗑" }
                     button type="button" class="tool" data-action="undo" title="Undo (Ctrl+Z)" { "↶" }
                     button type="button" class="tool danger" data-action="clear" title="Remove everything" { "Clear" }
+                }
+                div class="tool-group" aria-label="Zoom" {
+                    button type="button" class="tool" data-action="zoomOut" title="Zoom out (−)" aria-label="Zoom out" { "−" }
+                    button type="button" class="tool zoom-level" data-action="zoomFit" data-zoom-level title="Fit the whole ice (0)" { "100%" }
+                    button type="button" class="tool" data-action="zoomIn" title="Zoom in (+)" aria-label="Zoom in" { "+" }
                 }
             }
             div class="editor-canvas" { (svg(rink)) }

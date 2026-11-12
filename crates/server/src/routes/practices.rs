@@ -501,13 +501,13 @@ fn drill_text(d: &Drill) -> Markup {
 fn station_list(cx: &Ctx, plan: &Plan, seg: &Segment, library: &[Drill]) -> Markup {
     let base = format!("/segments/{}/stations", seg.id);
     let placed = plan.slots(seg);
-    let many = placed.len() > 1;
     html! {
         ol class="stations" {
             @for p in &placed {
                 li class="station" {
                     div class="station-head" {
-                        @if many { (badge(p.index + 1)) }
+                        // The same number as on the rink and the printed page.
+                        @if let Some(number) = p.number { (badge(number)) }
                         strong { (p.slot.name) }
                         @if p.slot.name != p.slot.size.label() { span class="muted small" { (p.slot.size.label()) } }
                     }

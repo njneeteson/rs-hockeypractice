@@ -72,19 +72,45 @@ The toolbar has four groups:
    puck, lateral steps, crossovers, goalie pad slide, goalie butterfly slide.
    The drop-down sets how the line ends: an arrow, a stop (two bars) or
    nothing.
-4. Turn left / right, delete, undo, and clear.
+4. Turn left / right, **Copy**, **Paste**, duplicate (⧉), delete, undo, and
+   clear.
+5. Zoom: − and + (the percentage in between fits the whole ice again).
 
 How to draw:
 
 - Pick a tool, then click the rink to place it.
 - For a line, drag to draw a curve. Or click several points and double-click
   (or press Enter) to finish.
-- With **Select**, drag things to move them. Delete removes the selected
-  item; double-click a text note to edit it. Ctrl+Z undoes.
+- Double-click a text note or a player to change its label. Ctrl+Z undoes.
 - Nets, barriers and danglers face a direction. Select one and drag its round
   handle to turn it (it snaps to 15°; hold Shift to turn freely), or use the
   ⟲ ⟳ buttons or R / Shift+R.
 - A net dropped near a goal line snaps onto it.
+
+### Selecting, copying and pasting
+
+With **Select**:
+
+- Click an item to select it, or drag a box on empty ice to select everything
+  it touches. Shift+click (or Ctrl+click) adds or removes one item; Ctrl+A
+  selects everything.
+- Drag any selected item to move the whole selection; it stops at the edge of
+  the ice. The arrow keys nudge it 1 ft (5 ft with Shift).
+- **R** / **Shift+R** (or ⟲ ⟳) turn the selection 15° about its middle, for
+  example a whole line of players with their skating lines.
+- **Delete** removes the selection.
+- **Ctrl+C**, **Ctrl+X**, **Ctrl+V** copy, cut and paste; **Ctrl+D**
+  duplicates. Pasted copies land a little down and to the right, and are
+  selected so you can drag them into place. You can copy from one drill, open
+  another, and paste there: handy for reusing a set-up such as a net with a
+  goalie and a pile of pucks.
+
+### Zooming in
+
+For precise work, zoom in with **+** (or Ctrl + mouse wheel, or a trackpad
+pinch, which zooms towards the pointer). When zoomed in, the mouse wheel
+moves around the rink, or hold **Space** (or the middle mouse button) and
+drag. Press **0** or click the percentage to see the whole ice again.
 
 The rink has no nets of its own: place the nets the drill uses, facing the way
 they should.
@@ -161,9 +187,13 @@ up and down with ↑ ↓, duplicated, or deleted.
 
 ![A part with three stations: rink, legend, strip and stations](images/08-stations-part.png)
 
-Each part shows its rink with numbered stations, a legend of the symbols used
-by its drills, a strip with the layout, rotation, equipment and notes, and a
-card for each station. There are three ways to place a drill:
+Each part shows its rink with its drills, a legend of the symbols they use, a
+strip with the layout, rotation, equipment and notes, and a card for each
+station. When a part has two or more drills they are numbered 1, 2, 3… on the
+rink, on the station cards and on the printed page. Only zones with a drill
+get a number, counted in order, so leaving a zone empty doesn't leave a gap.
+On the printed page an empty zone is simply blank. There are three ways to
+place a drill:
 
 - **Drag** it from the library onto the rink.
 - **Click** it in the library, then click a station.
