@@ -1,0 +1,40 @@
+# LocalApp on your home server.
+#
+#   docker compose up -d --build
+#   docker compose logs localapp     # shows the one-time setup link on first start
+#
+# LocalApp serves plain HTTP on port 8080. Put your reverse proxy (Caddy,
+# nginx, Traefik…) in front of it for HTTPS; examples are in docker/.
+
+services:
+  localapp:
+    build: .
+    image: localapp:latest
+    restart: unless-stopped
+    environment:
+      # The URL prefix the proxy forwards to the app (without stripping it).
+      LOCALAPP_BASE_PATH: /localapp
+      # Local time zone for dates shown in the app.
+      TZ: America/Vancouver
+      # Sessions with "keep me signed in" last this many days.
+      LOCALAPP_SESSION_DAYS: "30"
+      # Cookies are HTTPS-only. Set to "false" only if you really serve the app
+      # over plain HTTP (passwords then cross your network unencrypted).
+      LOCALAPP_SECURE_COOKIES: "true"
+      # Optional: create the first admin automatically instead of using the
+      # setup link. Remove both lines after the first start.
+      # LOCALAPP_ADMIN_USER: alice
+      # LOCALAPP_ADMIN_PASSWORD: change-me-please
+    volumes:
+      - localapp-data:/data
+      # Or keep the data in a folder next to this file. The folder must be
+      # writable by uid 65532 (sudo chown 65532:65532 ./data):
+      # - ./data:/data
+    ports:
+      # Only the reverse proxy on this machine needs to reach the app.
+      # If the proxy runs in Docker on the same network, remove this and use
+      # http://localapp:8080 as its upstream.
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  localapp-data:

@@ -1,0 +1,20 @@
+# Caddy in front of LocalApp at https://miniserver.local/localapp
+#
+# `handle` (not `handle_path`) keeps the /localapp prefix, which LocalApp
+# expects (LOCALAPP_BASE_PATH=/localapp). Caddy sets X-Forwarded-For,
+# X-Forwarded-Proto and X-Forwarded-Host itself.
+
+miniserver.local {
+	# A certificate from Caddy's own local CA, since .local names can't get
+	# public certificates. Install its root certificate on your devices once
+	# (on the Caddy host: `caddy trust`; see compose.with-caddy.yaml for Docker).
+	tls internal
+
+	handle /localapp* {
+		# LocalApp running in Docker on the same network…
+		reverse_proxy localapp:8080
+		# …or published on this machine: reverse_proxy 127.0.0.1:8080
+	}
+
+	# Your other services go here.
+}

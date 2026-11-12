@@ -1,0 +1,14 @@
+# Traefik labels for LocalApp at https://miniserver.local/localapp
+#
+# Merge into the `localapp` service of compose.yaml (and remove its `ports:`).
+# No StripPrefix middleware: LocalApp expects the /localapp prefix
+# (LOCALAPP_BASE_PATH=/localapp).
+
+services:
+  localapp:
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.localapp.rule=Host(`miniserver.local`) && PathPrefix(`/localapp`)
+      - traefik.http.routers.localapp.entrypoints=websecure
+      - traefik.http.routers.localapp.tls=true
+      - traefik.http.services.localapp.loadbalancer.server.port=8080

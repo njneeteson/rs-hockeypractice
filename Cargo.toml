@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+authors = ["Nathan J Neeteson"]
+
+[workspace.dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.37", features = ["bundled", "chrono"] }
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Dependencies are optimised even in debug builds (SQLite and Argon2 are slow otherwise).
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+strip = true

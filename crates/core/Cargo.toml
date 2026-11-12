@@ -1,0 +1,20 @@
+[package]
+name = "localapp-core"
+description = "LocalApp core: domain logic and SQLite storage, with no HTTP and no users"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

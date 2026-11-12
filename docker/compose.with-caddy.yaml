@@ -1,0 +1,39 @@
+# LocalApp plus Caddy, for a server that has no reverse proxy yet.
+#
+#   cp docker/Caddyfile.example docker/Caddyfile      # edit the host name
+#   docker compose -f docker/compose.with-caddy.yaml up -d --build
+#
+# Caddy serves https://miniserver.local/localapp with a certificate from its
+# own local CA. To avoid browser warnings, install that CA's root certificate
+# on your devices once. Copy it out of the container with:
+#   docker compose -f docker/compose.with-caddy.yaml cp \
+#     caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+
+services:
+  localapp:
+    build: ..
+    image: localapp:latest
+    restart: unless-stopped
+    environment:
+      LOCALAPP_BASE_PATH: /localapp
+      TZ: America/Vancouver
+    volumes:
+      - localapp-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - localapp
+
+volumes:
+  localapp-data:
+  caddy-data:
+  caddy-config:
