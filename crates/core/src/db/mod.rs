@@ -4,8 +4,17 @@
 //! is versioned with `PRAGMA user_version` (see `schema.rs`). Give each table
 //! its own submodule that adds methods to [`Database`], like `settings.rs`.
 
+mod drill_equipment;
+pub mod drills;
+pub mod practices;
 mod schema;
+mod segments;
 mod settings;
+mod stations;
+mod teams;
+
+pub use drills::DrillFilter;
+pub use practices::PracticeSummary;
 
 use anyhow::Context;
 use rusqlite::{Connection, Params, Row};
@@ -60,7 +69,6 @@ impl Database {
     }
 
     /// Run a query and collect every row.
-    #[allow(dead_code)]
     fn query_all<T, P: Params>(
         &self,
         sql: &str,

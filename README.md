@@ -1,17 +1,20 @@
-# LocalApp
+# Hockey Practice Planner
 
-A template for self-hosted web apps that run on a home server: a Rust core
-library, an [axum](https://github.com/tokio-rs/axum) server that renders HTML
-with [maud](https://maud.lambda.xyz), and [htmx](https://htmx.org) to make the
-pages feel like an app. Data lives in SQLite. Local accounts with an **admin**
-and **user** role are built in; everything else is up to the app.
+A self-hosted web app for planning hockey practices. Coaches keep a shared
+library of drills, each drawn on a rink diagram, then build a practice by
+dropping drills onto the ice. The finished plan downloads as a PDF with one
+page per part of the practice.
 
-It ships as one small binary (all assets compiled in, nothing loaded from a
-CDN) inside a distroless Docker image, meant to sit behind your reverse proxy
-at a path such as `https://miniserver.local/localapp`.
+Built on the LocalApp template: a Rust core library, an
+[axum](https://github.com/tokio-rs/axum) server that renders HTML with
+[maud](https://maud.lambda.xyz), and [htmx](https://htmx.org). Data lives in
+SQLite. It ships as one binary (all assets and fonts compiled in, nothing
+loaded from a CDN) inside a distroless Docker image, meant to sit behind your
+reverse proxy at a path such as `https://miniserver.local/localapp`.
 
 ## Contents
 
+- [Planning practices](#planning-practices)
 - [Starting a new project](#starting-a-new-project)
 - [What's included](#whats-included)
 - [Layout](#layout)
@@ -20,6 +23,61 @@ at a path such as `https://miniserver.local/localapp`.
 - [Building the app](#building-the-app)
 - [Security](#security)
 - [Deploying](#deploying)
+
+## Planning practices
+
+Everything is shared: every signed-in user sees and edits the same teams,
+drills and practices.
+
+- **Teams** (`/teams`): the team name is printed in the footer of each page.
+- **Drill library** (`/drills`): each drill has a name, category, suggested
+  minutes, the **ice it needs**, how to run it, key teaching points (one per
+  line) and equipment with quantities. Its diagram is drawn in the browser:
+  players (X, O, C, G, F, D or any label), cones, pucks, puck piles, tires,
+  extra nets, text, and lines for skating, skating backward, carrying the
+  puck, passes, shots and crossovers, ending in an arrow, a stop or nothing.
+  *Add example drills* on an empty library adds one drill of each size.
+- **Practices** (`/practices`): a date, optional start time, a team, and full
+  or half ice. A practice is a list of **parts**. Each part has a length, a
+  title, an **ice layout**, an optional rotation time and notes. The builder
+  shows each part's rink. Drag a drill from the library onto a station of the
+  same size, or click a drill and then a station. Without JavaScript, pick a
+  drill from the station's list instead. Parts can be reordered and copied,
+  and a whole practice can be copied to a new date.
+- **PDF** (*Download PDF*): one US Letter page per part. The header has the
+  date, clock time (or elapsed time), part title, its length and the page
+  number. The rink diagram fills the top half. A strip below it gives the
+  layout, rotation, equipment for that part and its notes. The bottom half has
+  each station's drill text in two columns, and the team name is in the footer.
+  Text that doesn't fit is set smaller, then continues on a "(continued)" page.
+
+### Ice sizes and layouts
+
+The rink is a North American 200 × 85 ft sheet. A drill is drawn on the part of
+the rink its size needs, and the builder moves it (mirrored or turned) onto any
+slot of that size:
+
+| Drill size | Drawn on |
+|---|---|
+| Full ice | the whole sheet |
+| Half ice | the left half, end boards to red line |
+| End zone | the left end zone, end boards to blue line |
+| Neutral zone | between the blue lines |
+| Quarter ice | the top-left quarter (one side of one half) |
+
+| Layout | Stations |
+|---|---|
+| Full ice: one drill | full |
+| Two halves | half + half |
+| Three zones | end zone + neutral zone + end zone |
+| Four quarters | 4 × quarter |
+| Left half + two quarters / two quarters + right half | half + 2 × quarter |
+| Half ice: one drill *(half-ice practices)* | half |
+| Half ice split in two quarters *(half-ice practices)* | 2 × quarter |
+
+A drill's text and diagram live in the library, so editing a drill updates
+every practice that uses it. A drill in use can't be deleted or change size;
+duplicate it instead.
 
 ## Starting a new project
 
@@ -64,19 +122,28 @@ at a path such as `https://miniserver.local/localapp`.
 ├── Cargo.toml                  workspace: shared versions, lints, profiles
 ├── crates/
 │   ├── core/                   localapp-core: domain logic + storage, no HTTP, no users
+│   │   ├── fonts/              Noto Sans (SIL OFL, see OFL.txt), embedded in PDFs
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── enum_macro.rs   str_enum!: enums with a storage key and a UI label
+│   │       ├── rink.rs         rink geometry + markings, ice sizes, layouts and their slots
+│   │       ├── diagram.rs      a drill's drawing (JSON) and how each item and line is drawn
+│   │       ├── drill.rs        drills, categories, equipment
+│   │       ├── practice.rs     teams, practices, parts (segments), stations, Plan
+│   │       ├── board.rs        complete SVG diagrams (one drill; a practice page)
+│   │       ├── pdf.rs          the printable plan (page SVGs → PDF with krilla)
+│   │       ├── samples.rs      example drills
+│   │       ├── svg.rs          SVG writing helpers and print colours
 │   │       └── db/             Database (app.sqlite): mod.rs, schema.rs (migrations), one file per table
 │   └── server/                 localapp-server: the web app
-│       ├── assets/             app.css, app.js, htmx.min.js, favicon.svg (compiled into the binary)
+│       ├── assets/             app.css, app.js, planner.js (builder + diagram editor), htmx.min.js, favicon.svg
 │       ├── src/
 │       │   ├── main.rs         serve / admin / healthcheck
 │       │   ├── config.rs       LOCALAPP_* environment variables
 │       │   ├── state.rs        AppState: config, auth store, app database, rate limiter
 │       │   ├── extract.rs      Ctx (signed in), AdminCtx (admin)
 │       │   ├── auth/           passwords, sessions, throttling, cross-site guard, store/ (auth.sqlite)
-│       │   ├── routes/         signin, home, account, admin/users; mod.rs wires routes + middleware
+│       │   ├── routes/         practices, segments, drills, teams, home, signin, account, admin/users
 │       │   ├── views/          layout, nav, components, forms
 │       │   ├── flash.rs        one-shot toast messages after a redirect
 │       │   ├── error.rs        AppError → HTML error page
@@ -127,7 +194,7 @@ every page works without JavaScript. htmx adds, on top:
 
 ## Development
 
-Requires Rust 1.88 or newer.
+Requires Rust 1.92 or newer.
 
 ```sh
 cargo test --workspace                       # unit + HTTP integration tests

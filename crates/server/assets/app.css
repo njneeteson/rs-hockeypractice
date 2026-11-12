@@ -21,6 +21,11 @@
   --crit: #d03b3b;
   --radius: 10px;
   --shadow: 0 1px 2px rgb(0 0 0 / 6%);
+  /* Rink diagrams stay light (they are pictures of paper plans); only the
+     ice and boards adapt so the rink stands out on a dark page. */
+  --rink-ice: light-dark(#ffffff, #e3e8ed);
+  --rink-boards: light-dark(#2b2b2b, #c9d1d9);
+  --cone: #f08a24;
 }
 
 /* The choice is on <body> (htmx swaps the body when navigating). */
@@ -692,3 +697,425 @@ tbody th {
   white-space: nowrap;
 }
 
+
+.small {
+  font-size: 0.85rem;
+}
+
+textarea {
+  width: 100%;
+}
+
+/* Pieces that need JavaScript, and their plain-HTML fallbacks. */
+html:not(.js) .js-only {
+  display: none;
+}
+
+.js .no-js-only {
+  display: none;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.inline-form input[type="text"],
+.inline-form select {
+  flex: 1;
+  min-width: 0;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.badge {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* ---- Rink diagrams ---------------------------------------------------------- */
+
+.rink-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.rink-svg .rk-ice {
+  fill: var(--rink-ice);
+}
+
+.rink-svg .rk-boards {
+  stroke: var(--rink-boards);
+}
+
+.rink-svg text {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  user-select: none;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-top: 0.6rem;
+  color: var(--text-2);
+  font-size: 0.85rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legend-item svg,
+.line-tool svg {
+  display: block;
+  width: 2.6rem;
+  height: 0.8rem;
+}
+
+/* Legend samples follow the text colour (light and dark, pressed buttons). */
+.legend .d-line,
+.tool .d-line {
+  stroke: currentColor;
+}
+
+.legend .d-head,
+.tool .d-head {
+  fill: currentColor;
+}
+
+/* ---- Drill library ------------------------------------------------------------ */
+
+.drill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+  gap: 1rem;
+}
+
+.drill-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.drill-card:hover,
+.drill-card:focus-visible {
+  border-color: var(--accent);
+}
+
+.drill-card .rink-svg {
+  height: 150px;
+  padding: 0.5rem;
+  background: var(--surface-2);
+}
+
+.drill-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.6rem 0.8rem;
+}
+
+.equipment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.6rem 1rem;
+}
+
+.equipment-grid input {
+  width: 100%;
+}
+
+/* ---- Diagram editor ------------------------------------------------------------- */
+
+.editor-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.tool {
+  min-width: 2.1rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.tool.sym {
+  font-weight: 700;
+}
+
+.tool.gear-cone {
+  color: var(--cone);
+}
+
+.tool[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.tool-group select {
+  padding: 0.2rem 0.3rem;
+  font-size: 0.85rem;
+}
+
+.editor-canvas {
+  padding: 0.25rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  touch-action: none;
+}
+
+.editor-canvas .rink-svg {
+  max-height: 70vh;
+  cursor: crosshair;
+}
+
+.editor-canvas[data-mode="select"] .rink-svg {
+  cursor: default;
+}
+
+.editor-canvas [data-i] {
+  cursor: move;
+}
+
+.editor-canvas .hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 3;
+  pointer-events: stroke;
+}
+
+.editor-canvas .hit-area {
+  fill: transparent;
+}
+
+.editor-canvas .sel-box {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.4;
+  stroke-dasharray: 1 0.7;
+  pointer-events: none;
+}
+
+.editor-canvas .draft {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* ---- Practice builder --------------------------------------------------------------- */
+
+.builder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 1rem;
+  align-items: start;
+}
+
+.library {
+  position: sticky;
+  top: 64px;
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+}
+
+@media (max-width: 1100px) {
+  .builder {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .library {
+    position: static;
+    order: -1;
+    max-height: 22rem;
+  }
+}
+
+.library-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.6rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.drill-chip {
+  display: flex;
+  flex-direction: column;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: grab;
+}
+
+.drill-chip:hover {
+  border-color: var(--accent);
+}
+
+.drill-chip.armed {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+}
+
+.chip-name {
+  font-weight: 600;
+}
+
+.segment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.segment-head h2 {
+  margin: 0;
+}
+
+.drop-slot {
+  transition: fill 0.15s;
+}
+
+.drop-slot.can-drop {
+  fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  stroke: var(--accent);
+  stroke-width: 0.6;
+  stroke-dasharray: 2 1.5;
+  cursor: copy;
+}
+
+.drop-slot.can-drop.over {
+  fill: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+
+.stations {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.station {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.station-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.station-empty {
+  margin: 0;
+}
+
+.station-forms {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.drill-text {
+  font-size: 0.88rem;
+}
+
+.drill-text p {
+  margin: 0.3rem 0;
+}
+
+.drill-text ul {
+  margin: 0.2rem 0;
+  padding-left: 1.2rem;
+}
+
+.drill-text .label {
+  font-weight: 600;
+}
+
+.segment-settings {
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.segment-settings > summary {
+  margin-bottom: 0.5rem;
+  color: var(--text-2);
+}

@@ -117,3 +117,13 @@ pub fn pager(page: usize, pages: usize, href_for: impl Fn(usize) -> String) -> M
         }
     }
 }
+
+/// Trusted SVG markup built by `localapp_core::board` (which escapes its text).
+pub fn svg(markup: String) -> Markup {
+    maud::PreEscaped(markup)
+}
+
+/// A numbered station badge.
+pub fn badge(number: usize) -> Markup {
+    html! { span class="badge" aria-label={ "Station " (number) } { (number) } }
+}

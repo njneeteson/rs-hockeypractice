@@ -1,0 +1,410 @@
+//! Teams, the drill library, the practice builder and the PDF, end to end
+//! through plain HTML forms (as a browser without JavaScript would use them).
+
+mod common;
+
+use axum::http::StatusCode;
+use common::{TestApp, url};
+
+/// Pull `href="…"`/`action="…"` targets that contain `needle`.
+fn links(body: &str, attr: &str, needle: &str) -> Vec<String> {
+    body.split(&format!(" {attr}=\""))
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap().replace("&amp;", "&"))
+        .filter(|s| s.contains(needle))
+        .collect()
+}
+
+fn id_from(location: &str, prefix: &str) -> i64 {
+    let rest = location.split(prefix).nth(1).expect(location);
+    rest.split(['/', '#', '?'])
+        .next()
+        .unwrap()
+        .parse()
+        .expect(location)
+}
+
+const DIAGRAM: &str = r#"{"items":[
+    {"t":"player","x":20,"y":20,"label":"X"},
+    {"t":"cone","x":30,"y":30},
+    {"t":"line","style":"pass","end":"arrow","pts":[[20,20],[40,30]]}
+]}"#;
+
+async fn new_drill(app: &mut TestApp, name: &str, ice: &str) -> i64 {
+    let r = app
+        .post(
+            &url("/drills"),
+            &[
+                ("name", name),
+                ("category", "passing"),
+                ("ice", ice),
+                ("minutes", "8"),
+                ("description", "Pass and follow your pass."),
+                ("points", "Tape to tape\nHeads up"),
+                ("diagram", DIAGRAM),
+                ("eq_pucks", "20"),
+                ("eq_cones", "4"),
+                ("eq_nets", ""),
+            ],
+        )
+        .await;
+    id_from(r.redirect(), "/drills/")
+}
+
+#[tokio::test]
+async fn drills_are_created_edited_and_listed() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    let id = new_drill(&mut app, "Pass and follow", "quarter").await;
+    let page = app.get(&url(&format!("/drills/{id}"))).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains("Drill saved."));
+    assert!(page.body.contains("data-diagram-editor"));
+    assert!(
+        page.body.contains("d-cone"),
+        "server-rendered preview for no-JS"
+    );
+
+    let list = app.get(&url("/drills?ice=quarter&q=follow")).await.body;
+    assert!(list.contains("Pass and follow"));
+    assert!(list.contains("Pucks 20 · Cones 4"));
+    assert!(
+        !app.get(&url("/drills?ice=full"))
+            .await
+            .body
+            .contains("Pass and follow")
+    );
+
+    // A bad diagram is rejected with the form kept, not lost.
+    let r = app
+        .post(
+            &url(&format!("/drills/{id}")),
+            &[
+                ("name", ""),
+                ("category", "passing"),
+                ("ice", "quarter"),
+                ("minutes", "8"),
+                ("diagram", DIAGRAM),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = app
+        .post(
+            &url(&format!("/drills/{id}")),
+            &[
+                ("name", "Renamed"),
+                ("category", "passing"),
+                ("ice", "quarter"),
+                ("minutes", "500"),
+                ("diagram", DIAGRAM),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(r.body.contains("Minutes must be between"));
+    assert!(r.body.contains("Renamed"), "the submitted values are kept");
+
+    let r = app
+        .post(&url(&format!("/drills/{id}/duplicate")), &[])
+        .await;
+    let copy = id_from(r.redirect(), "/drills/");
+    assert!(
+        app.get(&url(&format!("/drills/{copy}")))
+            .await
+            .body
+            .contains("Pass and follow (copy)")
+    );
+    let r = app.post(&url(&format!("/drills/{copy}/delete")), &[]).await;
+    assert_eq!(r.redirect(), "/localapp/drills");
+    assert_eq!(
+        app.get(&url(&format!("/drills/{copy}"))).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn sample_drills_fill_an_empty_library() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    assert!(
+        app.get(&url("/drills"))
+            .await
+            .body
+            .contains("Add example drills")
+    );
+    let r = app.post(&url("/drills/samples"), &[]).await;
+    let page = app.get(r.redirect()).await.body;
+    assert!(page.contains("Added 5 example drills."));
+    assert!(page.contains("1-on-1 corner battles"));
+}
+
+#[tokio::test]
+async fn teams_are_managed() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    app.post(&url("/teams"), &[("name", "U11 Hawks"), ("notes", "")])
+        .await;
+    let dup = app.post(&url("/teams"), &[("name", "u11 hawks")]).await;
+    assert!(
+        app.get(dup.redirect())
+            .await
+            .body
+            .contains("already a team")
+    );
+    let page = app.get(&url("/teams")).await.body;
+    let action = links(&page, "action", "/teams/")
+        .into_iter()
+        .find(|a| !a.ends_with("/delete"))
+        .unwrap();
+    app.post(&action, &[("name", "U11 Eagles"), ("notes", "Tuesdays")])
+        .await;
+    let page = app.get(&url("/teams")).await.body;
+    assert!(page.contains("U11 Eagles") && page.contains("Tuesdays"));
+    let delete = links(&page, "action", "/delete").pop().unwrap();
+    app.post(&delete, &[]).await;
+    assert!(!app.get(&url("/teams")).await.body.contains("U11 Eagles"));
+}
+
+#[tokio::test]
+async fn practices_are_built_and_printed() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    let half = new_drill(&mut app, "Half-ice shooting", "half").await;
+    let quarter = new_drill(&mut app, "Corner battles", "quarter").await;
+
+    // No teams yet: the practice form creates one.
+    assert!(
+        app.get(&url("/practices/new"))
+            .await
+            .body
+            .contains("new_team")
+    );
+    let r = app
+        .post(
+            &url("/practices"),
+            &[
+                ("new_team", "Riverside U13"),
+                ("title", "Skills"),
+                ("date", "2026-11-17"),
+                ("start", "17:30"),
+                ("ice", "full"),
+                ("notes", ""),
+            ],
+        )
+        .await;
+    let pid = id_from(r.redirect(), "/practices/");
+    let page = app.get(&url(&format!("/practices/{pid}"))).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains("no parts yet"));
+    assert!(!page.body.contains("plan.pdf"), "nothing to print yet");
+
+    // Add a part with a half + two quarters layout.
+    let r = app
+        .post(
+            &url(&format!("/practices/{pid}/segments")),
+            &[
+                ("title", "Stations"),
+                ("minutes", "16"),
+                ("layout", "half_quarters"),
+            ],
+        )
+        .await;
+    let sid = id_from(r.redirect(), "#seg-");
+    let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    assert!(page.contains("Part added."));
+    assert_eq!(page.matches("class=\"drop-slot\"").count(), 3);
+
+    // Place drills with the no-JS forms; a size mismatch is refused.
+    let place = |slot: usize| url(&format!("/segments/{sid}/stations/{slot}"));
+    let r = app
+        .post(&place(1), &[("drill_id", &half.to_string())])
+        .await;
+    assert!(
+        app.get(r.redirect())
+            .await
+            .body
+            .contains("needs a quarter ice drill")
+    );
+    app.post(&place(0), &[("drill_id", &half.to_string())])
+        .await;
+    let r = app
+        .post(&place(2), &[("drill_id", &quarter.to_string())])
+        .await;
+    assert!(
+        app.get(r.redirect())
+            .await
+            .body
+            .contains("Placed “Corner battles” in station 3.")
+    );
+    app.post(&format!("{}/note", place(2)), &[("note", "Coach Pat")])
+        .await;
+
+    // Rotation and strip notes.
+    app.post(
+        &url(&format!("/segments/{sid}")),
+        &[
+            ("title", "Stations"),
+            ("minutes", "16"),
+            ("layout", "half_quarters"),
+            ("rotation", "8"),
+            ("notes", "Whistle to rotate"),
+        ],
+    )
+    .await;
+    let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    assert!(page.contains("Rotate every 8 min"));
+    assert!(page.contains("Coach Pat"));
+    assert!(page.contains("5:30–5:46 PM"));
+    assert!(
+        page.contains("Pucks 40"),
+        "equipment adds up across stations"
+    );
+
+    // A drill in use can't be deleted or change size.
+    let r = app
+        .post(&url(&format!("/drills/{quarter}/delete")), &[])
+        .await;
+    assert!(
+        app.get(r.redirect())
+            .await
+            .body
+            .contains("used on 1 practice page")
+    );
+
+    // Second part, then reorder and copy.
+    let r = app
+        .post(
+            &url(&format!("/practices/{pid}/segments")),
+            &[
+                ("title", "Scrimmage"),
+                ("minutes", "10"),
+                ("layout", "full"),
+            ],
+        )
+        .await;
+    let sid2 = id_from(r.redirect(), "#seg-");
+    app.post(&url(&format!("/segments/{sid2}/move")), &[("dir", "up")])
+        .await;
+    let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    assert!(page.find("Scrimmage").unwrap() < page.find("Stations").unwrap());
+    app.post(&url(&format!("/segments/{sid}/duplicate")), &[])
+        .await;
+
+    // The PDF: one page per part.
+    let pdf = app.get(&url(&format!("/practices/{pid}/plan.pdf"))).await;
+    assert_eq!(pdf.status, StatusCode::OK);
+    assert!(pdf.body.starts_with("%PDF"));
+
+    // Copy the practice to another date, then delete the original.
+    let r = app
+        .post(
+            &url(&format!("/practices/{pid}/duplicate")),
+            &[("date", "2026-11-24")],
+        )
+        .await;
+    let copy = id_from(r.redirect(), "/practices/");
+    assert_ne!(copy, pid);
+    let page = app.get(&url(&format!("/practices/{copy}"))).await.body;
+    assert_eq!(page.matches("class=\"card segment\"").count(), 3);
+    let r = app
+        .post(&url(&format!("/practices/{pid}/delete")), &[])
+        .await;
+    assert_eq!(r.redirect(), "/localapp/practices");
+    assert_eq!(
+        app.get(&url(&format!("/practices/{pid}"))).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // Switching the copy to half ice resets the full-ice layouts.
+    let team = app
+        .st
+        .db(move |db| Ok(db.practice(copy)?.unwrap().team_id))
+        .await
+        .unwrap();
+    let r = app
+        .post(
+            &url(&format!("/practices/{copy}")),
+            &[
+                ("team_id", &team.to_string()),
+                ("date", "2026-11-24"),
+                ("ice", "half"),
+            ],
+        )
+        .await;
+    assert!(app.get(r.redirect()).await.body.contains("were reset"));
+}
+
+#[tokio::test]
+async fn new_pages_render_and_stay_under_the_base_path() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    app.post(&url("/drills/samples"), &[]).await;
+    app.post(
+        &url("/practices"),
+        &[
+            ("new_team", "Hawks"),
+            ("date", "2026-12-01"),
+            ("ice", "half"),
+        ],
+    )
+    .await;
+    let pid = app
+        .st
+        .db(|db| Ok(db.practices()?[0].practice.id))
+        .await
+        .unwrap();
+    app.post(
+        &url(&format!("/practices/{pid}/segments")),
+        &[("minutes", "10"), ("layout", "half_split")],
+    )
+    .await;
+    for path in [
+        "/".to_string(),
+        "/practices".into(),
+        "/practices/new".into(),
+        format!("/practices/{pid}"),
+        format!("/practices/{pid}/edit"),
+        "/drills".into(),
+        "/drills/new?ice=zone".into(),
+        "/drills/1".into(),
+        "/teams".into(),
+    ] {
+        let r = app.get(&url(&path)).await;
+        assert_eq!(r.status, StatusCode::OK, "{path}: {}", r.body);
+        for attr in ["href", "action", "data-assign-url"] {
+            for link in links(&r.body, attr, "") {
+                assert!(
+                    link.starts_with("/localapp")
+                        || link.starts_with('#')
+                        || link.starts_with("javascript:"),
+                    "{path}: {attr} {link} escapes the base path"
+                );
+            }
+        }
+    }
+    // Pages of other practices and missing things are 404s.
+    assert_eq!(
+        app.get(&url("/practices/999")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        app.get(&url("/practices/999/plan.pdf")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        app.post(&url("/segments/999/delete"), &[]).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // Other users share the same library and practices.
+    app.create_user("coach", localapp_server::auth::store::Role::User);
+    let mut coach = app.client();
+    coach.login("coach").await;
+    assert!(
+        coach
+            .get(&url(&format!("/practices/{pid}")))
+            .await
+            .body
+            .contains("Hawks")
+    );
+}

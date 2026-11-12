@@ -12,7 +12,7 @@ async fn health_and_assets_are_public() {
     let css = app.get(&url("/static/app.css")).await;
     assert_eq!(css.status, StatusCode::OK);
     assert!(css.body.contains("light-dark("));
-    for name in ["htmx.min.js", "app.js", "favicon.svg"] {
+    for name in ["htmx.min.js", "app.js", "planner.js", "favicon.svg"] {
         let r = app.get(&url(&format!("/static/{name}"))).await;
         assert_eq!(r.status, StatusCode::OK, "{name}");
     }

@@ -16,6 +16,17 @@ overview and layout.
 - No inline `<script>`. The CSP forbids it, and htmx runs with `allowEval: false`.
   Put behaviour in `assets/app.js`, driven by `data-*` attributes.
 
+## Practice planner specifics
+
+- Diagrams are drawn twice: in Rust (`crates/core/src/diagram.rs`, used for
+  web previews and the PDF) and in the browser editor
+  (`crates/server/assets/planner.js`). Change both together.
+- The PDF is built as one SVG per page (`pdf.rs`) and converted with
+  krilla-svg using the embedded Noto Sans; text width for wrapping comes from
+  the same font, so keep `svg::FONT` and the fonts in `crates/core/fonts` in step.
+- Drawn SVG elements carry print colours as attributes and a class; web
+  theming overrides only via those classes in `app.css`.
+
 ## Conventions
 
 - **Permissions** are enforced by the extractor a handler takes: `Ctx` for any

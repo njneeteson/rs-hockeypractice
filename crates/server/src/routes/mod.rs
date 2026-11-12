@@ -4,6 +4,8 @@
 //! /healthz, /static/*              public
 //! /login, /logout, /setup          sign-in (public)
 //! /, /account                      signed in
+//! /drills, /practices, /segments,  signed in (shared by all users)
+//! /teams
 //! /admin/*                         admins (enforced by `AdminCtx`)
 //! ```
 //!
@@ -12,8 +14,12 @@
 
 pub mod account;
 pub mod admin;
+pub mod drills;
 pub mod home;
+pub mod practices;
+pub mod segments;
 pub mod signin;
+pub mod teams;
 
 use crate::state::Shared;
 use crate::{assets, auth, flash};
@@ -49,6 +55,10 @@ fn routes(st: Shared) -> Router {
     let signed_in = Router::new()
         .route("/", get(home::show))
         .merge(account::routes())
+        .merge(drills::routes())
+        .merge(practices::routes())
+        .merge(segments::routes())
+        .merge(teams::routes())
         .merge(admin::routes())
         .route_layer(from_fn_with_state(st.clone(), auth::require_login));
 

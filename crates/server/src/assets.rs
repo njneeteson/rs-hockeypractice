@@ -24,7 +24,7 @@ const fn js(name: &'static str, bytes: &'static [u8]) -> Asset {
 }
 
 /// Scripts in the order pages load them (libraries before the code using them).
-pub const SCRIPTS: &[&str] = &["htmx.min.js", "app.js"];
+pub const SCRIPTS: &[&str] = &["htmx.min.js", "app.js", "planner.js"];
 
 const ASSETS: &[Asset] = &[
     Asset {
@@ -40,6 +40,7 @@ const ASSETS: &[Asset] = &[
     // Vendored library: htmx 2.0.4 (MIT).
     js("htmx.min.js", include_bytes!("../assets/htmx.min.js")),
     js("app.js", include_bytes!("../assets/app.js")),
+    js("planner.js", include_bytes!("../assets/planner.js")),
 ];
 
 /// Short content hash appended to asset URLs, so browsers can cache them forever.

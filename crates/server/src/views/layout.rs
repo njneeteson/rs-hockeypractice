@@ -12,7 +12,7 @@ use maud::{DOCTYPE, Markup, html};
 pub type Page = Html<String>;
 
 /// The app's name in titles and the top bar.
-pub const APP_NAME: &str = "LocalApp";
+pub const APP_NAME: &str = "Practice Planner";
 
 fn asset(st: &Shared, name: &str) -> String {
     st.url(&format!("/static/{name}?v={}", crate::assets::version()))

@@ -1,11 +1,23 @@
-//! LocalApp core: everything that isn't the web server.
+//! Hockey practice planner core: everything that isn't the web server.
 //!
-//! Put the app's domain types and logic here, plus its storage ([`db`]). The
-//! crate knows nothing about HTTP, users or sessions; `localapp-server` adds
-//! those on top. Keeping it that way means the logic can be unit-tested on its
-//! own and reused by another front end (a CLI, a desktop app).
+//! * [`rink`]: rink geometry, ice sizes and how layouts split the ice.
+//! * [`diagram`]: a drill's drawing (players, equipment, movement lines).
+//! * [`drill`], [`practice`]: the drill library and practice plans.
+//! * [`board`]: complete SVG diagrams; [`pdf`]: the printable plan.
+//! * [`db`]: SQLite storage.
+//!
+//! The crate knows nothing about HTTP, users or sessions; `localapp-server`
+//! adds those on top.
 
 #[macro_use]
 pub mod enum_macro;
 
+pub mod board;
 pub mod db;
+pub mod diagram;
+pub mod drill;
+pub mod pdf;
+pub mod practice;
+pub mod rink;
+pub mod samples;
+pub mod svg;

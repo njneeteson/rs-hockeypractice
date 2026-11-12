@@ -8,6 +8,9 @@ use maud::{Markup, html};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
     Home,
+    Practices,
+    Drills,
+    Teams,
     Account,
     Users,
 }
@@ -31,7 +34,15 @@ const fn item(nav: Nav, label: &'static str, path: &'static str, admin_only: boo
 
 /// Side-menu groups: `(section title, items)`.
 const SECTIONS: &[(&str, &[Item])] = &[
-    ("App", &[item(Nav::Home, "Home", "/", false)]),
+    (
+        "Plan",
+        &[
+            item(Nav::Home, "Home", "/", false),
+            item(Nav::Practices, "Practices", "/practices", false),
+            item(Nav::Drills, "Drill library", "/drills", false),
+            item(Nav::Teams, "Teams", "/teams", false),
+        ],
+    ),
     (
         "Settings",
         &[

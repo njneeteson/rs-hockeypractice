@@ -1,0 +1,652 @@
+//! Practices: the list, the details form, the builder (pages of drills on the
+//! ice) and the PDF download.
+
+use crate::error::{AppError, AppResult};
+use crate::extract::Ctx;
+use crate::flash;
+use crate::form;
+use crate::routes::drills::empty_library_note;
+use crate::state::Shared;
+use crate::views::components::{
+    Num, Text, badge, card, empty, heading, link_button, notice, stat_tile, svg, thead,
+};
+use crate::views::forms::{action_button, field};
+use crate::views::{Nav, Page, page};
+use axum::extract::{Path, Query};
+use axum::http::{HeaderValue, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Form, Router};
+use chrono::{Local, NaiveDate, NaiveTime};
+use localapp_core::board;
+use localapp_core::db::{DrillFilter, PracticeSummary};
+use localapp_core::drill::{Drill, equipment_summary};
+use localapp_core::practice::{Plan, PracticeFields, Segment};
+use localapp_core::rink::{IceSize, Layout, PracticeIce};
+use maud::{Markup, html};
+use serde::Deserialize;
+
+pub fn routes() -> Router<Shared> {
+    Router::new()
+        .route("/practices", get(list).post(create))
+        .route("/practices/new", get(new_page))
+        .route("/practices/{id}", get(show).post(update))
+        .route("/practices/{id}/edit", get(edit_page))
+        .route("/practices/{id}/delete", post(delete))
+        .route("/practices/{id}/duplicate", post(duplicate))
+        .route("/practices/{id}/plan.pdf", get(pdf))
+}
+
+// ---- List -----------------------------------------------------------------------
+
+#[derive(Deserialize, Default)]
+struct ListQuery {
+    team: Option<String>,
+}
+
+pub fn practice_table(cx: &Ctx, items: &[PracticeSummary]) -> Markup {
+    html! {
+        div class="table-wrap" {
+            table {
+                (thead(&[("Date", Text), ("Practice", Text), ("Team", Text), ("Ice", Text),
+                    ("Parts", Num), ("Minutes", Num), ("", Text)]))
+                tbody {
+                    @for s in items {
+                        @let p = &s.practice;
+                        tr {
+                            td class="date" {
+                                (p.date.format("%a %b %-d, %Y"))
+                                @if let Some(t) = p.start { span class="sub" { (t.format("%-I:%M %p")) } }
+                            }
+                            td { a href=(cx.url(&format!("/practices/{}", p.id))) { (p.display_title()) } }
+                            td { (p.team_name) }
+                            td { (p.ice.label()) }
+                            td class="num" { (s.pages) }
+                            td class="num" { (s.minutes) }
+                            td class="nowrap" {
+                                @if s.pages > 0 {
+                                    a class="btn small" hx-boost="false" target="_blank"
+                                        href=(cx.url(&format!("/practices/{}/plan.pdf", p.id))) { "PDF" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn list(cx: Ctx, Query(q): Query<ListQuery>) -> AppResult<Page> {
+    let team = q.team.as_deref().and_then(form::opt_id);
+    let (mut all, teams) = cx.db(|db| Ok((db.practices()?, db.teams()?))).await?;
+    if let Some(t) = team {
+        all.retain(|s| s.practice.team_id == t);
+    }
+    let today = Local::now().date_naive();
+    let (mut upcoming, past): (Vec<_>, Vec<_>) =
+        all.into_iter().partition(|s| s.practice.date >= today);
+    upcoming.reverse();
+    let body = html! {
+        (heading("Practices", "Plan a practice page by page, then print it as a PDF.",
+            link_button(&cx.url("/practices/new"), "New practice", true)))
+        @if teams.len() > 1 {
+            form method="get" action=(cx.url("/practices")) class="toolbar" {
+                (field("Team", "", html! {
+                    select name="team" data-autosubmit {
+                        option value="" { "All teams" }
+                        @for t in &teams {
+                            option value=(t.id) selected[team == Some(t.id)] { (t.name) }
+                        }
+                    }
+                }))
+                noscript { button type="submit" { "Show" } }
+            }
+        }
+        (card("Upcoming", "", html! {
+            @if upcoming.is_empty() { (empty("Nothing planned yet.")) } @else { (practice_table(&cx, &upcoming)) }
+        }))
+        @if !past.is_empty() {
+            (card("Past", "", practice_table(&cx, &past)))
+        }
+    };
+    Ok(page(&cx, Nav::Practices, "Practices", body))
+}
+
+// ---- Details form -------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PracticeForm {
+    #[serde(default)]
+    team_id: String,
+    #[serde(default)]
+    new_team: String,
+    #[serde(default)]
+    title: String,
+    date: String,
+    #[serde(default)]
+    start: String,
+    ice: String,
+    #[serde(default)]
+    notes: String,
+}
+
+fn parse_date(v: &str) -> AppResult<NaiveDate> {
+    NaiveDate::parse_from_str(v.trim(), "%Y-%m-%d")
+        .map_err(|_| AppError::bad_request(format!("“{v}” isn't a date (YYYY-MM-DD).")))
+}
+
+fn parse_time(v: &str) -> AppResult<Option<NaiveTime>> {
+    let v = v.trim();
+    if v.is_empty() {
+        return Ok(None);
+    }
+    NaiveTime::parse_from_str(v, "%H:%M")
+        .or_else(|_| NaiveTime::parse_from_str(v, "%H:%M:%S"))
+        .map(Some)
+        .map_err(|_| AppError::bad_request(format!("“{v}” isn't a time (HH:MM).")))
+}
+
+impl PracticeForm {
+    /// The fields, with the team id resolved later (a new team may need creating).
+    fn fields(&self) -> AppResult<PracticeFields> {
+        Ok(PracticeFields {
+            team_id: form::opt_id(&self.team_id).unwrap_or(0),
+            title: self.title.clone(),
+            date: parse_date(&self.date)?,
+            start: parse_time(&self.start)?,
+            ice: form::key(&self.ice, "ice")?,
+            notes: self.notes.clone(),
+        })
+    }
+}
+
+fn details_form(
+    cx: &Ctx,
+    action: &str,
+    p: Option<&localapp_core::practice::Practice>,
+    teams: &[localapp_core::practice::Team],
+) -> Markup {
+    let today = Local::now().date_naive();
+    let date = p.map(|p| p.date).unwrap_or(today);
+    let start = p
+        .and_then(|p| p.start)
+        .map(|t| t.format("%H:%M").to_string())
+        .unwrap_or_default();
+    let ice = p.map(|p| p.ice).unwrap_or(PracticeIce::Full);
+    html! {
+        form method="post" action=(action) class="form-stack" {
+            div class="form-grid" {
+                @if teams.is_empty() {
+                    (field("Team", "You don't have any teams yet; this one is created with the practice.", html! {
+                        input type="text" name="new_team" required placeholder="e.g. U13 A Hawks";
+                    }))
+                } @else {
+                    (field("Team", "Printed in the footer of every page.", html! {
+                        select name="team_id" {
+                            @for t in teams {
+                                option value=(t.id) selected[p.is_some_and(|p| p.team_id == t.id)] { (t.name) }
+                            }
+                        }
+                    }))
+                }
+                (field("Title", "Optional, e.g. “Tuesday skills”.", html! {
+                    input type="text" name="title" maxlength="100" value=(p.map(|p| p.title.as_str()).unwrap_or(""));
+                }))
+                (field("Date", "", html! { input type="date" name="date" value=(date) required; }))
+                (field("Start time", "Optional. With it, each page shows clock times.", html! {
+                    input type="time" name="start" value=(start);
+                }))
+                (field("Ice", "Changing this later resets pages whose layout doesn't fit.", html! {
+                    select name="ice" {
+                        @for i in PracticeIce::ALL {
+                            option value=(i.key()) selected[*i == ice] { (i.label()) }
+                        }
+                    }
+                }))
+            }
+            (field("Notes", "For you; not printed.", html! {
+                textarea name="notes" rows="3" { (p.map(|p| p.notes.as_str()).unwrap_or("")) }
+            }))
+            div class="form-actions" {
+                button type="submit" class="primary" { (if p.is_some() { "Save" } else { "Create practice" }) }
+                a class="btn" href=(cx.url("/practices")) { "Cancel" }
+            }
+        }
+    }
+}
+
+async fn new_page(cx: Ctx) -> AppResult<Page> {
+    let teams = cx.db(|db| db.teams()).await?;
+    let body = html! {
+        (heading("New practice", "Set the date and ice, then add parts and drop drills onto the rink.", html! {}))
+        (card("", "", details_form(&cx, &cx.url("/practices"), None, &teams)))
+    };
+    Ok(page(&cx, Nav::Practices, "New practice", body))
+}
+
+async fn create(cx: Ctx, Form(f): Form<PracticeForm>) -> AppResult<Response> {
+    let mut fields = f.fields()?;
+    let new_team = f.new_team.clone();
+    let result = cx
+        .db(move |db| {
+            if fields.team_id == 0 {
+                fields.team_id = db.create_team(&new_team, "")?;
+            }
+            db.create_practice(fields)
+        })
+        .await;
+    match result {
+        Ok(id) => Ok(flash::info(
+            &cx.st,
+            &cx.url(&format!("/practices/{id}")),
+            "Practice created. Add its first part below.",
+        )),
+        Err(e) => Ok(flash::error(
+            &cx.st,
+            &cx.url("/practices/new"),
+            format!("{e:#}"),
+        )),
+    }
+}
+
+async fn edit_page(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
+    let (p, teams) = cx.db(move |db| Ok((db.practice(id)?, db.teams()?))).await?;
+    let p = p.ok_or(AppError::NotFound)?;
+    let base = format!("/practices/{id}");
+    let tomorrow = (p.date + chrono::Duration::days(7)).to_string();
+    let body = html! {
+        (heading(&format!("Edit {}", p.display_title()), "", link_button(&cx.url(&base), "← Back to the plan", false)))
+        div class="grid" {
+            (card("Details", "", details_form(&cx, &cx.url(&base), Some(&p), &teams)))
+            div class="stack" {
+                (card("Copy this practice", "Copies every part and drill to a new date.", html! {
+                    form method="post" action=(cx.url(&format!("{base}/duplicate"))) class="form-grid" {
+                        (field("New date", "", html! { input type="date" name="date" value=(tomorrow) required; }))
+                        div { button type="submit" { "Copy" } }
+                    }
+                }))
+                (card("Delete", "", html! {
+                    p { "Deletes the practice and its pages. The drills stay in the library." }
+                    (action_button(&cx.url(&format!("{base}/delete")), "Delete practice", "danger",
+                        Some("Delete this practice? This can't be undone.")))
+                }))
+            }
+        }
+    };
+    Ok(page(&cx, Nav::Practices, "Edit practice", body))
+}
+
+async fn update(cx: Ctx, Path(id): Path<i64>, Form(f): Form<PracticeForm>) -> AppResult<Response> {
+    let mut fields = f.fields()?;
+    let new_team = f.new_team.clone();
+    let result = cx
+        .db(move |db| {
+            if fields.team_id == 0 {
+                fields.team_id = db.create_team(&new_team, "")?;
+            }
+            db.update_practice(id, fields)
+        })
+        .await
+        .map(|reset| match reset {
+            0 => "Practice saved.".to_string(),
+            n => format!("Practice saved. {n} part(s) didn't fit the new ice and were reset."),
+        });
+    Ok(flash::report(
+        &cx.st,
+        &cx.url(&format!("/practices/{id}")),
+        result,
+    ))
+}
+
+async fn delete(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
+    match cx.db(move |db| db.delete_practice(id)).await {
+        Ok(()) => Ok(flash::info(
+            &cx.st,
+            &cx.url("/practices"),
+            "Practice deleted.",
+        )),
+        Err(e) => Ok(flash::error(
+            &cx.st,
+            &cx.url(&format!("/practices/{id}/edit")),
+            format!("{e:#}"),
+        )),
+    }
+}
+
+#[derive(Deserialize)]
+struct DuplicateForm {
+    date: String,
+}
+
+async fn duplicate(
+    cx: Ctx,
+    Path(id): Path<i64>,
+    Form(f): Form<DuplicateForm>,
+) -> AppResult<Response> {
+    let date = parse_date(&f.date)?;
+    match cx.db(move |db| db.duplicate_practice(id, date)).await {
+        Ok(new) => Ok(flash::info(
+            &cx.st,
+            &cx.url(&format!("/practices/{new}")),
+            "Copied. You're looking at the copy.",
+        )),
+        Err(e) => Ok(flash::error(
+            &cx.st,
+            &cx.url(&format!("/practices/{id}/edit")),
+            format!("{e:#}"),
+        )),
+    }
+}
+
+// ---- PDF ----------------------------------------------------------------------------------
+
+fn file_name(plan: &Plan) -> String {
+    let raw = format!(
+        "{} {} practice",
+        plan.practice.date, plan.practice.team_name
+    );
+    let slug: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    format!("{slug}.pdf")
+}
+
+async fn pdf(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
+    let plan = cx
+        .db(move |db| db.plan(id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if plan.segments.is_empty() {
+        return Ok(flash::error(
+            &cx.st,
+            &cx.url(&format!("/practices/{id}")),
+            "Add at least one part before printing.",
+        ));
+    }
+    let name = file_name(&plan);
+    let bytes = tokio::task::spawn_blocking(move || localapp_core::pdf::render(&plan)).await??;
+    let mut resp = bytes.into_response();
+    let h = resp.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/pdf"),
+    );
+    if let Ok(v) = HeaderValue::from_str(&format!("inline; filename=\"{name}\"")) {
+        h.insert(header::CONTENT_DISPOSITION, v);
+    }
+    Ok(resp)
+}
+
+// ---- The builder ----------------------------------------------------------------------------
+
+fn layout_select(name: &str, ice: PracticeIce, selected: Layout) -> Markup {
+    html! {
+        select name=(name) {
+            @for l in Layout::for_ice(ice) {
+                option value=(l.key()) selected[l == selected] { (l.label()) }
+            }
+        }
+    }
+}
+
+fn drill_text(d: &Drill) -> Markup {
+    html! {
+        @for para in d.paragraphs() { p { (para) } }
+        @let points = d.key_points();
+        @if !points.is_empty() {
+            p class="label" { "Key points" }
+            ul { @for pt in points { li { (pt) } } }
+        }
+        @if !d.equipment.is_empty() {
+            p class="muted small" { "Equipment: " (d.equipment_summary()) }
+        }
+    }
+}
+
+fn station_list(cx: &Ctx, plan: &Plan, seg: &Segment, library: &[Drill]) -> Markup {
+    let base = format!("/segments/{}/stations", seg.id);
+    let placed = plan.slots(seg);
+    let many = placed.len() > 1;
+    html! {
+        ol class="stations" {
+            @for p in &placed {
+                li class="station" {
+                    div class="station-head" {
+                        @if many { (badge(p.index + 1)) }
+                        strong { (p.slot.name) }
+                        span class="muted small" { (p.slot.size.label()) }
+                    }
+                    @if let Some(d) = p.drill {
+                        div class="station-drill" {
+                            a href=(cx.url(&format!("/drills/{}", d.id))) { (d.name) }
+                            span class="muted small" { " · " (d.minutes) " min · " (d.category.label()) }
+                        }
+                        details class="drill-text" {
+                            summary { "Text on the printed page" }
+                            (drill_text(d))
+                        }
+                        div class="station-forms" {
+                            form method="post" action=(cx.url(&format!("{base}/{}/note", p.index))) class="inline-form" {
+                                input type="text" name="note" value=(p.note) maxlength="200"
+                                    placeholder="Note: coach, group, variation" aria-label="Station note";
+                                button type="submit" class="small" { "Save note" }
+                            }
+                            (action_button(&cx.url(&format!("{base}/{}/clear", p.index)), "Remove", "small danger", None))
+                        }
+                    } @else {
+                        p class="muted small station-empty" { "Empty. Drop a " (p.slot.size.label().to_lowercase()) " drill on the rink, or pick one:" }
+                    }
+                    @let options: Vec<&Drill> = library.iter().filter(|d| d.ice == p.slot.size).collect();
+                    form method="post" action=(cx.url(&format!("{base}/{}", p.index))) class="inline-form" {
+                        select name="drill_id" aria-label="Drill for this station" required {
+                            @if options.is_empty() {
+                                option value="" { "No " (p.slot.size.label().to_lowercase()) " drills yet" }
+                            } @else {
+                                option value="" { "Choose a drill…" }
+                            }
+                            @for d in &options {
+                                option value=(d.id) selected[p.drill.is_some_and(|x| x.id == d.id)] { (d.name) }
+                            }
+                        }
+                        button type="submit" class="small" disabled[options.is_empty()] {
+                            (if p.drill.is_some() { "Replace" } else { "Place" })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn segment_settings(cx: &Ctx, plan: &Plan, seg: &Segment) -> Markup {
+    html! {
+        form method="post" action=(cx.url(&format!("/segments/{}", seg.id))) class="form-stack" {
+            div class="form-grid" {
+                (field("Title", "Printed at the top of the page.", html! {
+                    input type="text" name="title" value=(seg.title) maxlength="80" placeholder="e.g. Warm-up";
+                }))
+                (field("Minutes", "Length of this part; printed in the header.", html! {
+                    input type="number" name="minutes" value=(seg.minutes) min="1" max="180" required;
+                }))
+                (field("Ice layout", "How the ice is split into stations. Drills that don't fit a new layout are removed.",
+                    layout_select("layout", plan.practice.ice, seg.layout)))
+                (field("Rotate every (min)", "Minutes per station before groups move on. Leave empty for no rotation.", html! {
+                    input type="number" name="rotation" value=[seg.rotation] min="1" max="60";
+                }))
+            }
+            (field("Notes for the strip", "Printed between the rink and the drill text: groups, whistle signals, goalie plan…", html! {
+                textarea name="notes" rows="2" { (seg.notes) }
+            }))
+            div { button type="submit" class="primary" { "Save part" } }
+        }
+    }
+}
+
+fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
+    let seg = &plan.segments[i];
+    let base = format!("/segments/{}", seg.id);
+    let last = i + 1 == plan.segments.len();
+    let eq = plan.segment_equipment(seg);
+    html! {
+        section class="card segment" id={ "seg-" (seg.id) } {
+            div class="segment-head" {
+                div {
+                    div class="muted small" { "Page " (i + 1) " · " (plan.time_range(i)) }
+                    h2 { (seg.display_title()) " " span class="pill" { (seg.minutes) " min" } }
+                }
+                div class="actions" {
+                    @if i > 0 {
+                        form method="post" action=(cx.url(&format!("{base}/move"))) class="inline" {
+                            input type="hidden" name="dir" value="up";
+                            button type="submit" class="small" title="Move up" aria-label="Move up" { "↑" }
+                        }
+                    }
+                    @if !last {
+                        form method="post" action=(cx.url(&format!("{base}/move"))) class="inline" {
+                            input type="hidden" name="dir" value="down";
+                            button type="submit" class="small" title="Move down" aria-label="Move down" { "↓" }
+                        }
+                    }
+                    (action_button(&cx.url(&format!("{base}/duplicate")), "Duplicate", "small", None))
+                    (action_button(&cx.url(&format!("{base}/delete")), "Delete", "small danger",
+                        Some("Delete this part of the practice?")))
+                }
+            }
+            div class="segment-body" {
+                div class="board-wrap" data-assign-url=(cx.url(&format!("{base}/stations/"))) {
+                    (svg(board::segment_svg(plan, seg, true)))
+                }
+                div class="strip" {
+                    span { strong { "Ice: " } (seg.layout.label()) }
+                    @if let Some(r) = seg.rotation_text() { span { strong { "Rotation: " } (r) } }
+                    @if !eq.is_empty() { span { strong { "Equipment: " } (equipment_summary(&eq)) } }
+                    @if !seg.notes.is_empty() { span { strong { "Notes: " } (seg.notes) } }
+                }
+                (station_list(cx, plan, seg, library))
+            }
+            details class="segment-settings" open[seg.title.is_empty() && seg.stations.is_empty()] {
+                summary { "Part settings: title, minutes, layout, rotation, notes" }
+                (segment_settings(cx, plan, seg))
+            }
+        }
+    }
+}
+
+fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce) -> Markup {
+    let usable: Vec<&Drill> = library
+        .iter()
+        .filter(|d| {
+            Layout::for_ice(ice)
+                .iter()
+                .any(|l| l.slots().iter().any(|s| s.size == d.ice))
+        })
+        .collect();
+    html! {
+        aside class="library card" data-library aria-label="Drill library" {
+            h2 { "Drills" }
+            p class="muted small js-only" {
+                "Drag a drill onto a matching station on the rink, or click a drill and then a station."
+            }
+            div class="library-filters" {
+                input type="search" data-library-search placeholder="Filter drills" aria-label="Filter drills";
+                select data-library-size aria-label="Ice size" {
+                    option value="" { "All sizes" }
+                    @for s in IceSize::ALL {
+                        @if usable.iter().any(|d| d.ice == *s) {
+                            option value=(s.key()) { (s.label()) }
+                        }
+                    }
+                }
+            }
+            @if usable.is_empty() {
+                (empty("No drills fit this ice yet."))
+            }
+            ul class="library-list" {
+                @for d in &usable {
+                    li class="drill-chip" draggable="true" tabindex="0" data-drill-id=(d.id) data-size=(d.ice.key())
+                        data-name=(d.name.to_lowercase()) aria-label={ (d.name) ", " (d.ice.label()) } {
+                        span class="chip-name" { (d.name) }
+                        span class="muted small" { (d.ice.label()) " · " (d.minutes) " min" }
+                    }
+                }
+            }
+            a class="small" href=(cx.url("/drills/new")) { "+ New drill" }
+        }
+    }
+}
+
+fn add_segment_form(cx: &Ctx, plan: &Plan) -> Markup {
+    let n = plan.segments.len();
+    let suggestion = match n {
+        0 => "Warm-up",
+        _ => "",
+    };
+    html! {
+        form method="post" action=(cx.url(&format!("/practices/{}/segments", plan.practice.id))) class="form-grid" {
+            (field("Title", "", html! { input type="text" name="title" value=(suggestion) maxlength="80" placeholder="e.g. Skill stations"; }))
+            (field("Minutes", "", html! { input type="number" name="minutes" value="10" min="1" max="180" required; }))
+            (field("Ice layout", "", layout_select("layout", plan.practice.ice, Layout::default_for(plan.practice.ice))))
+            div { button type="submit" class="primary" { "Add part" } }
+        }
+    }
+}
+
+async fn show(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
+    let (plan, library) = cx
+        .db(move |db| Ok((db.plan(id)?, db.drills(&DrillFilter::default())?)))
+        .await?;
+    let plan = plan.ok_or(AppError::NotFound)?;
+    let p = &plan.practice;
+    let base = format!("/practices/{id}");
+    let intro = format!(
+        "{} · {}{} · {}",
+        p.date.format("%A, %B %-d, %Y"),
+        p.start
+            .map(|t| format!("{} · ", t.format("%-I:%M %p")))
+            .unwrap_or_default(),
+        p.team_name,
+        p.ice.label()
+    );
+    let eq = plan.equipment();
+    let body = html! {
+        (heading(p.display_title(), &intro, html! {
+            @if !plan.segments.is_empty() {
+                a class="btn primary" hx-boost="false" target="_blank" href=(cx.url(&format!("{base}/plan.pdf"))) { "Download PDF" }
+            }
+            a class="btn" href=(cx.url(&format!("{base}/edit"))) { "Details, copy, delete" }
+        }))
+        div class="tiles" {
+            (stat_tile("Length", html! { (plan.total_minutes()) " min" }, "", ""))
+            (stat_tile("Pages", html! { (plan.segments.len()) }, "One page per part", ""))
+            (stat_tile("Equipment", html! { (eq.iter().map(|(_, q)| q).sum::<u32>()) " items" },
+                &equipment_summary(&eq), "The most any one part needs, item by item."))
+        }
+        @if library.is_empty() { (empty_library_note(&cx)) }
+        div class="builder" {
+            div class="builder-main" {
+                @if plan.segments.is_empty() {
+                    (notice("info", html! { "This practice has no parts yet. Each part is a block of time and becomes one page of the plan." }))
+                }
+                @for i in 0..plan.segments.len() {
+                    (segment_card(&cx, &plan, i, &library))
+                }
+                (card("Add a part", "Each part is a block of time with its own page and rink diagram.", add_segment_form(&cx, &plan)))
+            }
+            (library_panel(&cx, &library, p.ice))
+        }
+    };
+    Ok(page(&cx, Nav::Practices, p.display_title(), body))
+}
