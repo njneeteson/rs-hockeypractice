@@ -45,7 +45,9 @@ by name or text, or filter by ice size and category. On a new, empty library,
 
 Click a drill to open it, or **New drill**. A drill has:
 
-- **Name**, **Category** and **Minutes** (how long it usually runs).
+- **Name**, **Category** and **Minutes**: how long it usually runs. This is
+  only a suggestion for planning; on a practice the drill gets the time of
+  its part (see [Parts and ice layouts](#parts-and-ice-layouts)).
 - **Ice needed**: the area it is drawn on (full ice, half ice, end zone,
   neutral zone, or neutral zone to the red line). **Width**: the whole area or
   one of 2–4 lanes running along it. "Half ice, 1 of 2 lanes" is quarter ice.
@@ -182,6 +184,11 @@ Each part has **Part settings** to change the title, minutes, layout, a
 8 min (3 stations, 24 min round)"), and **notes** printed on the page. If you
 change the layout, drills that no longer fit are taken off. Parts can be moved
 up and down with ↑ ↓, duplicated, or deleted.
+
+On the plan, every drill in a part shows the time it actually gets there,
+never its own suggested minutes: the rotation time when groups rotate between
+two or more drills, otherwise the length of the part. A 10-minute drill placed
+in a 3-minute part shows 3 minutes.
 
 ## Putting drills on the ice
 

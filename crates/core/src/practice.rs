@@ -290,10 +290,23 @@ impl Segment {
         self.stations.iter().find(|s| s.slot == slot)
     }
 
+    /// How long each drill runs in this part, as shown on the plan: the
+    /// rotation time when groups rotate between two or more drills, otherwise
+    /// the whole part. Never more than the part's length. (A drill's own
+    /// minutes are only a suggestion for the library.)
+    pub fn station_minutes(&self) -> u32 {
+        match self.rotation {
+            Some(r) if self.stations.len() > 1 => r.min(self.minutes),
+            _ => self.minutes,
+        }
+    }
+
     /// The text for the strip's rotation entry, e.g. "Rotate every 6 min (3 stations)".
     pub fn rotation_text(&self) -> Option<String> {
-        let r = self.rotation?;
-        let k = self.layout.slots().len();
+        self.rotation?;
+        let r = self.station_minutes();
+        // Stations with a drill (empty zones aren't part of the rotation).
+        let k = self.stations.len();
         Some(if k > 1 {
             format!(
                 "Rotate every {r} min ({k} stations, {} min round)",
@@ -447,5 +460,43 @@ mod tests {
         assert_eq!(clock(t, 0), ("11:50".into(), "AM"));
         assert_eq!(clock(t, 15), ("12:05".into(), "PM"));
         assert_eq!(elapsed(75), "1:15");
+    }
+
+    #[test]
+    fn drills_run_for_the_part_or_the_rotation() {
+        let station = |slot| Station {
+            slot,
+            drill_id: 1,
+            note: String::new(),
+            flip: false,
+        };
+        let mut seg = Segment {
+            id: 1,
+            practice_id: 1,
+            position: 0,
+            title: String::new(),
+            minutes: 3,
+            layout: Layout::Full(4),
+            rotation: None,
+            notes: String::new(),
+            stations: vec![station(0)],
+            goalies: None,
+        };
+        // One drill: the whole part, whatever the drill suggests.
+        assert_eq!(seg.station_minutes(), 3);
+        // Several drills side by side, no rotation: the whole part.
+        seg.stations.push(station(2));
+        assert_eq!(seg.station_minutes(), 3);
+        // Rotating: the rotation time, never more than the part.
+        seg.minutes = 24;
+        seg.rotation = Some(8);
+        assert_eq!(seg.station_minutes(), 8);
+        // Two drills in four zones: the round counts the two.
+        assert_eq!(
+            seg.rotation_text().unwrap(),
+            "Rotate every 8 min (2 stations, 16 min round)"
+        );
+        seg.rotation = Some(40);
+        assert_eq!(seg.station_minutes(), 24);
     }
 }

@@ -514,7 +514,7 @@ fn station_list(cx: &Ctx, plan: &Plan, seg: &Segment, library: &[Drill]) -> Mark
                     @if let Some(d) = p.drill {
                         div class="station-drill" {
                             a href=(cx.url(&format!("/drills/{}", d.id))) { (d.name) }
-                            span class="muted small" { " · " (d.minutes) " min · " (d.category.label()) }
+                            span class="muted small" { " · " (seg.station_minutes()) " min · " (d.category.label()) }
                         }
                         details class="drill-text" data-keep={ "text-" (seg.id) "-" (p.index) } {
                             summary { "Text on the printed page" }

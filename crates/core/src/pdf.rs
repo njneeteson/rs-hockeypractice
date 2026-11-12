@@ -211,7 +211,10 @@ fn drill_lines(plan: &Plan, seg: &Segment, size: f32, col_w: f32) -> Vec<Line> {
             let badge = p.number.filter(|_| i == 0);
             push(&mut lines, Kind::Heading(badge), l, hsize * 1.3, true);
         }
-        let mut sub = vec![format!("{} min", d.minutes), d.category.label().to_string()];
+        let mut sub = vec![
+            format!("{} min", seg.station_minutes()),
+            d.category.label().to_string(),
+        ];
         if many {
             sub.insert(0, p.slot.name.to_string());
         }
