@@ -1235,6 +1235,29 @@ html:not(.js) .js-only {
   touch-action: none;
 }
 
+/* The turning handle: only shown with JavaScript (it does nothing without). */
+.board .goalie-rot {
+  display: none;
+}
+
+.js .board .goalie-rot {
+  display: inline;
+}
+
+.board .goalie-rot path {
+  stroke: var(--accent);
+  stroke-width: 0.3;
+  stroke-dasharray: 0.8 0.5;
+  pointer-events: none;
+}
+
+.board .goalie-rot circle {
+  fill: var(--accent);
+  stroke: var(--rink-ice);
+  stroke-width: 0.3;
+  cursor: grab;
+}
+
 .board .goalie-spot.dragging {
   cursor: grabbing;
   opacity: 0.75;

@@ -618,7 +618,7 @@ fn goalie_row(cx: &Ctx, plan: &Plan, seg: &Segment) -> Markup {
             @if seg.goalies.is_some() {
                 (turn(-45, "⟲", "Turn left"))
                 (turn(45, "⟳", "Turn right"))
-                span class="muted small js-only" { "Drag it on the rink to move it." }
+                span class="muted small js-only" { "Drag it on the rink to move it; drag its blue handle (or press R while moving it) to turn it." }
             } @else {
                 span class="muted small" { "Two nets with goalies and a coach, out of the drills' way." }
             }

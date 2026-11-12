@@ -90,9 +90,11 @@ function placeDrill(slot, drillId) {
 
 // ---- Practice builder: moving the goalie warm-up ------------------------------
 //
-// Drag the warm-up (two nets, goalies, coach) anywhere on the part's rink. It
-// follows the pointer with a temporary transform; on release its new spot is
-// posted and the server draws it there.
+// Drag the warm-up (two nets, goalies, coach) anywhere on the part's rink, and
+// turn it: drag its round handle (15° steps, Shift to turn freely), or press
+// R / Shift+R while moving it. It follows the pointer with a temporary
+// transform; on release its new spot and angle are posted and the server
+// draws it there.
 
 let goalieDrag = null;
 
@@ -103,6 +105,15 @@ function rinkPoint(svg, event) {
   return pt.matrixTransform(svg.getScreenCTM().inverse());
 }
 
+function previewGoalies(drag) {
+  const x = Number(drag.spot.dataset.x);
+  const y = Number(drag.spot.dataset.y);
+  drag.spot.setAttribute(
+    "transform",
+    `translate(${drag.dx} ${drag.dy}) rotate(${drag.turn} ${x} ${y})`,
+  );
+}
+
 document.addEventListener("pointerdown", (event) => {
   const spot = event.target.closest && event.target.closest(".board .goalie-spot");
   if (!spot || event.button !== 0 || !spot.closest("[data-goalie-url]")) {
@@ -110,18 +121,39 @@ document.addEventListener("pointerdown", (event) => {
   }
   event.preventDefault();
   const svg = spot.ownerSVGElement;
-  goalieDrag = { spot, svg, start: rinkPoint(svg, event), dx: 0, dy: 0 };
+  const turning = Boolean(event.target.closest(".goalie-rot"));
+  goalieDrag = { spot, svg, start: rinkPoint(svg, event), dx: 0, dy: 0, turn: 0, turning };
   spot.classList.add("dragging");
 });
 
 document.addEventListener("pointermove", (event) => {
-  if (!goalieDrag) {
+  const drag = goalieDrag;
+  if (!drag) {
     return;
   }
-  const p = rinkPoint(goalieDrag.svg, event);
-  goalieDrag.dx = p.x - goalieDrag.start.x;
-  goalieDrag.dy = p.y - goalieDrag.start.y;
-  goalieDrag.spot.setAttribute("transform", `translate(${goalieDrag.dx} ${goalieDrag.dy})`);
+  const p = rinkPoint(drag.svg, event);
+  if (drag.turning) {
+    // Point the warm-up at the pointer.
+    const x = Number(drag.spot.dataset.x);
+    const y = Number(drag.spot.dataset.y);
+    const step = event.shiftKey ? 1 : 15;
+    const angle = (Math.atan2(p.y - y, p.x - x) * 180) / Math.PI;
+    drag.turn = Math.round(angle / step) * step - Number(drag.spot.dataset.rot);
+  } else {
+    drag.dx = p.x - drag.start.x;
+    drag.dy = p.y - drag.start.y;
+  }
+  previewGoalies(drag);
+});
+
+// R / Shift+R turn the warm-up while it's being moved.
+document.addEventListener("keydown", (event) => {
+  if (!goalieDrag || event.key.toLowerCase() !== "r") {
+    return;
+  }
+  event.preventDefault();
+  goalieDrag.turn += event.shiftKey ? -15 : 15;
+  previewGoalies(goalieDrag);
 });
 
 function endGoalieDrag(commit) {
@@ -131,7 +163,9 @@ function endGoalieDrag(commit) {
     return;
   }
   drag.spot.classList.remove("dragging");
-  if (!commit || Math.hypot(drag.dx, drag.dy) < 1) {
+  const moved = Math.hypot(drag.dx, drag.dy) >= 1;
+  const turned = Math.round(drag.turn) % 360 !== 0;
+  if (!commit || (!moved && !turned)) {
     drag.spot.removeAttribute("transform");
     return;
   }
@@ -140,8 +174,9 @@ function endGoalieDrag(commit) {
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const x = clamp(Number(drag.spot.dataset.x) + drag.dx, vb.x + 2, vb.x + vb.width - 2);
   const y = clamp(Number(drag.spot.dataset.y) + drag.dy, vb.y + 2, vb.y + vb.height - 2);
+  const rot = Math.round(Number(drag.spot.dataset.rot) + drag.turn);
   const wrap = drag.spot.closest("[data-goalie-url]");
-  postFromBoard(wrap, wrap.dataset.goalieUrl, { x: x.toFixed(1), y: y.toFixed(1) });
+  postFromBoard(wrap, wrap.dataset.goalieUrl, { x: x.toFixed(1), y: y.toFixed(1), rot });
 }
 
 document.addEventListener("pointerup", () => endGoalieDrag(true));

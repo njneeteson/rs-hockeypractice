@@ -202,14 +202,16 @@ impl GoalieWarmup {
                 rot: self.rot,
             }
         };
-        let [px, py] = p((21.0, 4.0));
+        // Compact: nets side by side 9 ft apart, goalies in the crease, the
+        // coach 12 ft out. About 19 × 17 ft in all, so it fits between drills.
+        let [px, py] = p((13.5, 2.5));
         Diagram {
             items: vec![
-                net((0.0, -7.0)),
-                net((0.0, 7.0)),
-                player((3.5, -7.0), "G"),
-                player((3.5, 7.0), "G"),
-                player((18.0, 0.0), "C"),
+                net((0.0, -4.5)),
+                net((0.0, 4.5)),
+                player((2.5, -4.5), "G"),
+                player((2.5, 4.5), "G"),
+                player((12.0, 0.0), "C"),
                 Item::Pucks { x: px, y: py },
             ],
         }
@@ -218,11 +220,17 @@ impl GoalieWarmup {
     /// A rough outline of the warm-up on the rink (for grabbing it on screen).
     pub fn outline(self) -> [[f32; 2]; 4] {
         [
-            self.at(-4.5, -11.5),
-            self.at(24.0, -11.5),
-            self.at(24.0, 11.5),
-            self.at(-4.5, 11.5),
+            self.at(-4.0, -8.5),
+            self.at(15.0, -8.5),
+            self.at(15.0, 8.5),
+            self.at(-4.0, 8.5),
         ]
+    }
+
+    /// Where the turning handle sits: just past the coach, in the direction
+    /// the nets face.
+    pub fn handle(self) -> [f32; 2] {
+        self.at(17.5, 0.0)
     }
 }
 

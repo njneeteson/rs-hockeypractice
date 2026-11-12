@@ -555,6 +555,32 @@ async fn goalie_warmup_and_page_preview() {
     let seg = app.st.db(move |db| db.segment(sid)).await.unwrap().unwrap();
     let g = seg.goalies.unwrap();
     assert_eq!((g.x, g.y, g.rot), (60.0, 80.0, 90.0));
+    // Turned while dragging (or by its handle): the angle comes along.
+    let r = app
+        .post(&goalies, &[("x", "60"), ("y", "80"), ("rot", "-30")])
+        .await;
+    assert!(
+        app.get(r.redirect())
+            .await
+            .body
+            .contains("Goalie warm-up turned.")
+    );
+    let r = app
+        .post(&goalies, &[("x", "40"), ("y", "20"), ("rot", "375")])
+        .await;
+    assert!(
+        app.get(r.redirect())
+            .await
+            .body
+            .contains("Goalie warm-up moved.")
+    );
+    let seg = app.st.db(move |db| db.segment(sid)).await.unwrap().unwrap();
+    let g = seg.goalies.unwrap();
+    assert_eq!((g.x, g.y, g.rot), (40.0, 20.0, 15.0));
+    assert!(
+        seg_board(&mut app, pid).await.contains("goalie-rot"),
+        "a turning handle"
+    );
     // Off the half-ice sheet: refused.
     let r = app.post(&goalies, &[("x", "150"), ("y", "40")]).await;
     assert!(app.get(r.redirect()).await.body.contains("practice's ice"));
@@ -572,4 +598,9 @@ async fn goalie_warmup_and_page_preview() {
         .get(&url(&format!("/practices/{pid}/preview/999")))
         .await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
+}
+
+/// The builder page's HTML (for checking what the boards draw).
+async fn seg_board(app: &mut TestApp, pid: i64) -> String {
+    app.get(&url(&format!("/practices/{pid}"))).await.body
 }

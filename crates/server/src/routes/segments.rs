@@ -243,6 +243,9 @@ struct GoalieForm {
     /// Degrees to turn it by.
     #[serde(default)]
     turn: String,
+    /// The angle it faces after being dragged (degrees); with `x` and `y`.
+    #[serde(default)]
+    rot: String,
 }
 
 /// Place, move, turn or remove the part's goalie warm-up.
@@ -270,9 +273,15 @@ async fn goalies(cx: Ctx, Path(sid): Path<i64>, Form(f): Form<GoalieForm>) -> Ap
         let rot = g.rot + t;
         (Some(GoalieWarmup { rot, ..g }), "Goalie warm-up turned.")
     } else if let (Some(x), Some(y)) = (num(&f.x)?, num(&f.y)?) {
-        // Dragged: a new spot, facing the same way (into the ice for a new one).
-        let rot = current.map_or(if y < 42.5 { 90.0 } else { -90.0 }, |g| g.rot);
-        (Some(GoalieWarmup { x, y, rot }), "Goalie warm-up moved.")
+        // Dragged: a new spot, at the angle it was turned to while dragging,
+        // else facing the same way (into the ice for a new one).
+        let same = current.map_or(if y < 42.5 { 90.0 } else { -90.0 }, |g| g.rot);
+        let rot = num(&f.rot)?.unwrap_or(same);
+        let msg = match current {
+            Some(g) if (g.x, g.y) == (x, y) => "Goalie warm-up turned.",
+            _ => "Goalie warm-up moved.",
+        };
+        (Some(GoalieWarmup { x, y, rot }), msg)
     } else {
         match f.spot.as_str() {
             "" | "none" => (None, "Goalie warm-up removed."),

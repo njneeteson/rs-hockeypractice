@@ -201,9 +201,16 @@ boards in the neutral zone.
 
 ![The goalie warm-up controls](images/11-goalie-row.png)
 
-Then drag it on the rink to wherever it is out of the way, and turn it with
-⟲ ⟳ so the nets face the right way. Its two nets are added to the equipment,
-and it appears on the printed page.
+It is compact (about 19 × 17 ft), so it fits in a corner or a gap between
+stations. Drag it on the rink to wherever it is out of the way, and turn it so
+the nets face the right way:
+
+- drag the round blue handle just past the coach (it turns in 15° steps; hold
+  Shift to turn freely);
+- or press **R** (Shift+R the other way) while you're dragging it;
+- or use the ⟲ ⟳ buttons (45° at a time).
+
+Its two nets are added to the equipment, and it appears on the printed page.
 
 In "Puck skills" the lanes on the right run along the boards, so the warm-up
 sits in the open strip between them, facing the end boards:

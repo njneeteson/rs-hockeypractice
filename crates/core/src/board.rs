@@ -169,8 +169,20 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
                 .collect();
             let _ = write!(
                 out,
-                r#"<polygon class="goalie-hit" points="{}" fill="transparent"><title>Goalie warm-up: drag to move</title></polygon>"#,
+                r#"<polygon class="goalie-hit" points="{}" fill="transparent"><title>Goalie warm-up: drag to move (R turns it while dragging)</title></polygon>"#,
                 pts.join(" ")
+            );
+            // A round handle past the coach: drag it to turn the warm-up.
+            let [hx, hy] = g.handle();
+            let _ = write!(
+                out,
+                r#"<g class="goalie-rot"><path d="M {} {} L {} {}" fill="none"/><circle cx="{}" cy="{}" r="1.6"><title>Drag to turn the goalie warm-up</title></circle></g>"#,
+                n(g.x),
+                n(g.y),
+                n(hx),
+                n(hy),
+                n(hx),
+                n(hy)
             );
         }
         out.push_str("</g>");
