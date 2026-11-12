@@ -99,8 +99,10 @@ fn top_bar(cx: &Ctx) -> Markup {
 /// The pending message as a toast (fades after a few seconds unless it's an error).
 fn flash(cx: &Ctx) -> Markup {
     html! {
-        @if let Some(f) = cx.take_flash() {
-            div class="toasts" aria-live="polite" {
+        // Always present (empty when there's no message) so a partial page
+        // update can bring in a new message too.
+        div class="toasts" id="toasts" aria-live="polite" {
+            @if let Some(f) = cx.take_flash() {
                 @let kind = if f.kind == Kind::Error { "error" } else { "info" };
                 (notice(kind, html! { (f.message) }))
             }

@@ -101,8 +101,21 @@ UPDATE segments SET layout = CASE layout
     ELSE layout END;
 "#;
 
+/// V4: a placed drill can be flipped top ↔ bottom in its station.
+const V4: &str = r#"
+ALTER TABLE stations ADD COLUMN flip INTEGER NOT NULL DEFAULT 0;
+"#;
+
+/// V5: a part can have a goalie warm-up (two nets, goalies and a coach)
+/// placed anywhere on the ice; NULL when there is none.
+const V5: &str = r#"
+ALTER TABLE segments ADD COLUMN goalie_x REAL;
+ALTER TABLE segments ADD COLUMN goalie_y REAL;
+ALTER TABLE segments ADD COLUMN goalie_rot REAL;
+"#;
+
 /// Ordered migrations; index + 1 is the resulting schema version.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 pub fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "foreign_keys", true)?;

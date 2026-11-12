@@ -21,7 +21,9 @@ use chrono::{Local, NaiveDate, NaiveTime};
 use localapp_core::board;
 use localapp_core::db::{DrillFilter, PracticeSummary};
 use localapp_core::drill::{Drill, equipment_summary};
-use localapp_core::practice::{Plan, PracticeFields, Segment};
+use localapp_core::practice::{
+    GOALIE_WARMUP, GoalieWarmup, PlacedSlot, Plan, PracticeFields, Segment,
+};
 use localapp_core::rink::{End, IceSize, Layout, MAX_LANES, PracticeIce};
 use maud::{Markup, html};
 use serde::Deserialize;
@@ -35,6 +37,7 @@ pub fn routes() -> Router<Shared> {
         .route("/practices/{id}/delete", post(delete))
         .route("/practices/{id}/duplicate", post(duplicate))
         .route("/practices/{id}/plan.pdf", get(pdf))
+        .route("/practices/{id}/preview/{sid}", get(preview))
 }
 
 // ---- List -----------------------------------------------------------------------
@@ -390,6 +393,54 @@ async fn pdf(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
     Ok(resp)
 }
 
+/// One part's printed page as an SVG image (see `pdf::page_preview`).
+async fn preview(cx: Ctx, Path((id, sid)): Path<(i64, i64)>) -> AppResult<Response> {
+    let plan = cx
+        .db(move |db| db.plan(id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let i = plan
+        .segments
+        .iter()
+        .position(|s| s.id == sid)
+        .ok_or(AppError::NotFound)?;
+    let svg =
+        tokio::task::spawn_blocking(move || localapp_core::pdf::page_preview(&plan, i)).await??;
+    let mut resp = svg.into_response();
+    let h = resp.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("image/svg+xml"),
+    );
+    // The URL carries a version of the part (see `preview_url`), so a cached
+    // copy is never stale.
+    h.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=86400"),
+    );
+    Ok(resp)
+}
+
+/// The preview image's URL, versioned by everything printed on the page so
+/// the browser reloads it exactly when the page changes.
+fn preview_url(cx: &Ctx, plan: &Plan, seg: &Segment) -> String {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    // The header shows the clock time and "page n of m", so earlier parts'
+    // lengths and the number of parts count too.
+    let minutes: Vec<u32> = plan.segments.iter().map(|s| s.minutes).collect();
+    format!("{:?}{:?}{minutes:?}", plan.practice, seg).hash(&mut h);
+    for st in &seg.stations {
+        format!("{:?}", plan.drills.get(&st.drill_id)).hash(&mut h);
+    }
+    cx.url(&format!(
+        "/practices/{}/preview/{}?v={:x}",
+        plan.practice.id,
+        seg.id,
+        h.finish()
+    ))
+}
+
 // ---- The builder ----------------------------------------------------------------------------
 
 /// The ice-layout fields of a part's form. Full ice: one area or lanes, or split
@@ -465,38 +516,111 @@ fn station_list(cx: &Ctx, plan: &Plan, seg: &Segment, library: &[Drill]) -> Mark
                             a href=(cx.url(&format!("/drills/{}", d.id))) { (d.name) }
                             span class="muted small" { " · " (d.minutes) " min · " (d.category.label()) }
                         }
-                        details class="drill-text" {
+                        details class="drill-text" data-keep={ "text-" (seg.id) "-" (p.index) } {
                             summary { "Text on the printed page" }
                             (drill_text(d))
                         }
                         div class="station-forms" {
                             form method="post" action=(cx.url(&format!("{base}/{}/note", p.index))) class="inline-form" {
-                                input type="text" name="note" value=(p.note) maxlength="200"
+                                input type="text" name="note" value=(p.note) maxlength="200" data-autosubmit
                                     placeholder="Note: coach, group, variation" aria-label="Station note";
-                                button type="submit" class="small" { "Save note" }
+                                button type="submit" class="small no-js-only" { "Save note" }
                             }
-                            (action_button(&cx.url(&format!("{base}/{}/clear", p.index)), "Remove", "small danger", None))
+                            div class="station-actions" {
+                                form method="post" action=(cx.url(&format!("{base}/{}/flip", p.index))) class="inline" {
+                                    input type="hidden" name="flip" value=(if p.flip { "0" } else { "1" });
+                                    button type="submit" class="btn small" aria-pressed=(p.flip)
+                                        title="Turn the drill over top to bottom in this station: boards side ↔ open ice" {
+                                        (if p.flip { "⇅ Flipped: undo" } else { "⇅ Flip top/bottom" })
+                                    }
+                                }
+                                (action_button(&cx.url(&format!("{base}/{}/clear", p.index)), "Remove", "small danger", None))
+                            }
                         }
                     } @else {
-                        p class="muted small station-empty" { "Empty. Drop a " (p.slot.size.label().to_lowercase()) " drill on the rink, or pick one:" }
-                    }
-                    @let options: Vec<&Drill> = library.iter().filter(|d| d.ice == p.slot.size).collect();
-                    form method="post" action=(cx.url(&format!("{base}/{}", p.index))) class="inline-form" {
-                        select name="drill_id" aria-label="Drill for this station" required {
-                            @if options.is_empty() {
-                                option value="" { "No " (p.slot.size.label().to_lowercase()) " drills yet" }
-                            } @else {
-                                option value="" { "Choose a drill…" }
-                            }
-                            @for d in &options {
-                                option value=(d.id) selected[p.drill.is_some_and(|x| x.id == d.id)] { (d.name) }
-                            }
+                        p class="muted small station-empty" {
+                            "Empty. Drop a drill on the rink, or pick one: " (p.slot.size.label().to_lowercase()) " or anything that fits inside it."
                         }
-                        button type="submit" class="small" disabled[options.is_empty()] {
-                            (if p.drill.is_some() { "Replace" } else { "Place" })
+                    }
+                    (drill_select(cx, &format!("{base}/{}", p.index), library, p))
+                }
+            }
+        }
+    }
+}
+
+/// The station's drill picker: drills of the slot's size first, then smaller
+/// ones that fit inside it. With JavaScript, choosing one places it at once.
+fn drill_select(cx: &Ctx, action: &str, library: &[Drill], p: &PlacedSlot) -> Markup {
+    let sizes = p.slot.size.accepts();
+    let groups: Vec<(IceSize, Vec<&Drill>)> = sizes
+        .iter()
+        .map(|s| {
+            (
+                *s,
+                library.iter().filter(|d| d.ice == *s).collect::<Vec<_>>(),
+            )
+        })
+        .filter(|(_, ds)| !ds.is_empty())
+        .collect();
+    html! {
+        form method="post" action=(cx.url(action)) class="inline-form" {
+            select name="drill_id" aria-label="Drill for this station" required data-autosubmit {
+                @if groups.is_empty() {
+                    option value="" { "No drills fit here yet" }
+                } @else {
+                    option value="" { (if p.drill.is_some() { "Replace with…" } else { "Choose a drill…" }) }
+                }
+                @for (size, ds) in &groups {
+                    optgroup label=(size.label()) {
+                        @for d in ds {
+                            option value=(d.id) selected[p.drill.is_some_and(|x| x.id == d.id)] { (d.name) }
                         }
                     }
                 }
+            }
+            button type="submit" class="small no-js-only" disabled[groups.is_empty()] {
+                (if p.drill.is_some() { "Replace" } else { "Place" })
+            }
+        }
+    }
+}
+
+/// The goalie warm-up: none, or two nets with goalies and a coach at a spot
+/// along the boards. With JavaScript it can also be dragged on the rink.
+fn goalie_row(cx: &Ctx, plan: &Plan, seg: &Segment) -> Markup {
+    let action = cx.url(&format!("/segments/{}/goalies", seg.id));
+    let ice = plan.practice.ice;
+    let current = seg.goalies.map(|g| g.preset_key(ice).unwrap_or("custom"));
+    let turn = |deg: i32, label: &str, title: &str| {
+        html! {
+            form method="post" action=(action) class="inline" {
+                input type="hidden" name="turn" value=(deg);
+                button type="submit" class="btn small" title=(title) aria-label=(title) { (label) }
+            }
+        }
+    };
+    html! {
+        div class="goalie-row" {
+            form method="post" action=(action) class="inline-form" {
+                label for={ "goalies-" (seg.id) } { strong { "Goalie warm-up" } }
+                select id={ "goalies-" (seg.id) } name="spot" data-autosubmit {
+                    option value="none" selected[current.is_none()] { "None" }
+                    @for (key, label, _) in GoalieWarmup::presets(ice) {
+                        option value=(key) selected[current == Some(key)] { (label) }
+                    }
+                    @if current == Some("custom") {
+                        option value="custom" selected { "Where you dragged it" }
+                    }
+                }
+                button type="submit" class="small no-js-only" { "Set" }
+            }
+            @if seg.goalies.is_some() {
+                (turn(-45, "⟲", "Turn left"))
+                (turn(45, "⟳", "Turn right"))
+                span class="muted small js-only" { "Drag it on the rink to move it." }
+            } @else {
+                span class="muted small" { "Two nets with goalies and a coach, out of the drills' way." }
             }
         }
     }
@@ -558,7 +682,8 @@ fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
             div class="segment-body" {
                 @let legend = board::segment_legend(plan, seg);
                 div class="board-row" {
-                    div class="board-wrap" data-assign-url=(cx.url(&format!("{base}/stations/"))) {
+                    div class="board-wrap" data-assign-url=(cx.url(&format!("{base}/stations/")))
+                        data-goalie-url=(cx.url(&format!("{base}/goalies"))) {
                         (svg(board::segment_svg(plan, seg, true)))
                     }
                     @if !legend.is_empty() {
@@ -571,14 +696,22 @@ fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
                 div class="strip" {
                     span { strong { "Ice: " } (seg.layout.label()) }
                     @if let Some(r) = seg.rotation_text() { span { strong { "Rotation: " } (r) } }
+                    @if seg.goalies.is_some() { span { strong { "Goalies: " } (GOALIE_WARMUP) } }
                     @if !eq.is_empty() { span { strong { "Equipment: " } (equipment_summary(&eq)) } }
                     @if !seg.notes.is_empty() { span { strong { "Notes: " } (seg.notes) } }
                 }
                 (station_list(cx, plan, seg, library))
+                (goalie_row(cx, plan, seg))
             }
-            details class="segment-settings" open[seg.title.is_empty() && seg.stations.is_empty()] {
+            details class="segment-settings" data-keep={ "settings-" (seg.id) } open[seg.title.is_empty() && seg.stations.is_empty()] {
                 summary { "Part settings: title, minutes, layout, rotation, notes" }
                 (segment_settings(cx, plan, seg))
+            }
+            details class="page-preview" data-keep={ "preview-" (seg.id) } {
+                summary { "Preview the printed page" }
+                // Lazy: only loaded once the preview is opened.
+                img src=(preview_url(cx, plan, seg)) loading="lazy" width="612" height="792"
+                    alt={ "Printed page for " (seg.display_title()) };
             }
         }
     }
@@ -654,13 +787,15 @@ async fn show(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
     );
     let eq = plan.equipment();
     let body = html! {
-        (heading(p.display_title(), &intro, html! {
-            @if !plan.segments.is_empty() {
-                a class="btn primary" hx-boost="false" target="_blank" href=(cx.url(&format!("{base}/plan.pdf"))) { "Download PDF" }
-            }
-            a class="btn" href=(cx.url(&format!("{base}/edit"))) { "Details, copy, delete" }
-        }))
-        div class="tiles" {
+        div id="practice-head" {
+            (heading(p.display_title(), &intro, html! {
+                @if !plan.segments.is_empty() {
+                    a class="btn primary" hx-boost="false" target="_blank" href=(cx.url(&format!("{base}/plan.pdf"))) { "Download PDF" }
+                }
+                a class="btn" href=(cx.url(&format!("{base}/edit"))) { "Details, copy, delete" }
+            }))
+        }
+        div class="tiles" id="practice-tiles" {
             (stat_tile("Length", html! { (plan.total_minutes()) " min" }, "", ""))
             (stat_tile("Pages", html! { (plan.segments.len()) }, "One page per part", ""))
             (stat_tile("Equipment", html! { (eq.iter().map(|(_, q)| q).sum::<u32>()) " items" },
@@ -668,7 +803,13 @@ async fn show(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
         }
         @if library.is_empty() { (empty_library_note(&cx)) }
         div class="builder" {
-            div class="builder-main" {
+            // With htmx, every change in the parts (placing a drill, notes,
+            // settings, reordering) swaps just this column and the summary
+            // above it, keeping the scroll position. Without it, the forms post
+            // and redirect back as usual.
+            div class="builder-main" id="builder-main" hx-target="#builder-main" hx-select="#builder-main"
+                hx-swap="outerHTML show:none" hx-push-url="false"
+                hx-select-oob="#practice-head,#practice-tiles,#toasts" {
                 @if plan.segments.is_empty() {
                     (notice("info", html! { "This practice has no parts yet. Each part is a block of time and becomes one page of the plan." }))
                 }

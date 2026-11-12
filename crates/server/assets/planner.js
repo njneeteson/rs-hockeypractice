@@ -7,7 +7,7 @@
 // ---- Practice builder: drill library -----------------------------------------
 //
 // Drag a drill from the library onto a station (a `.drop-slot` in a rink
-// diagram) of the same ice size, or click a drill and then a station. Placing
+// diagram) it fits in (`data-accepts` lists the drill sizes), or click a drill and then a station. Placing
 // posts the same form the no-JavaScript "Place" button does.
 
 function filterLibrary(library) {
@@ -37,7 +37,8 @@ let picked = null;
 
 function showTargets(size) {
   for (const slot of document.querySelectorAll(".drop-slot")) {
-    slot.classList.toggle("can-drop", Boolean(size) && slot.dataset.size === size);
+    const accepts = (slot.dataset.accepts || slot.dataset.size || "").split(" ");
+    slot.classList.toggle("can-drop", Boolean(size) && accepts.includes(size));
     slot.classList.remove("over");
   }
 }
@@ -57,27 +58,94 @@ function pick(chip) {
   showTargets(picked.size);
 }
 
+// Post `fields` to `action` as the no-JavaScript form would. The form goes
+// inside the board (so inside the builder column, which htmx updates in place).
+function postFromBoard(wrap, action, fields) {
+  const form = document.createElement("form");
+  form.method = "post";
+  form.action = action;
+  form.hidden = true;
+  for (const [name, value] of Object.entries(fields)) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.append(input);
+  }
+  wrap.append(form);
+  if (window.htmx) {
+    htmx.process(form);
+  }
+  form.requestSubmit();
+}
+
 function placeDrill(slot, drillId) {
   const wrap = slot.closest("[data-assign-url]");
   if (!wrap || !drillId) {
     return;
   }
-  const form = document.createElement("form");
-  form.method = "post";
-  form.action = wrap.dataset.assignUrl + slot.dataset.slot;
-  form.hidden = true;
-  const input = document.createElement("input");
-  input.type = "hidden";
-  input.name = "drill_id";
-  input.value = drillId;
-  form.append(input);
-  document.body.append(form);
-  if (window.htmx) {
-    htmx.process(form);
-  }
   pick(null);
-  form.requestSubmit();
+  postFromBoard(wrap, wrap.dataset.assignUrl + slot.dataset.slot, { drill_id: drillId });
 }
+
+// ---- Practice builder: moving the goalie warm-up ------------------------------
+//
+// Drag the warm-up (two nets, goalies, coach) anywhere on the part's rink. It
+// follows the pointer with a temporary transform; on release its new spot is
+// posted and the server draws it there.
+
+let goalieDrag = null;
+
+function rinkPoint(svg, event) {
+  const pt = svg.createSVGPoint();
+  pt.x = event.clientX;
+  pt.y = event.clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+document.addEventListener("pointerdown", (event) => {
+  const spot = event.target.closest && event.target.closest(".board .goalie-spot");
+  if (!spot || event.button !== 0 || !spot.closest("[data-goalie-url]")) {
+    return;
+  }
+  event.preventDefault();
+  const svg = spot.ownerSVGElement;
+  goalieDrag = { spot, svg, start: rinkPoint(svg, event), dx: 0, dy: 0 };
+  spot.classList.add("dragging");
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (!goalieDrag) {
+    return;
+  }
+  const p = rinkPoint(goalieDrag.svg, event);
+  goalieDrag.dx = p.x - goalieDrag.start.x;
+  goalieDrag.dy = p.y - goalieDrag.start.y;
+  goalieDrag.spot.setAttribute("transform", `translate(${goalieDrag.dx} ${goalieDrag.dy})`);
+});
+
+function endGoalieDrag(commit) {
+  const drag = goalieDrag;
+  goalieDrag = null;
+  if (!drag) {
+    return;
+  }
+  drag.spot.classList.remove("dragging");
+  if (!commit || Math.hypot(drag.dx, drag.dy) < 1) {
+    drag.spot.removeAttribute("transform");
+    return;
+  }
+  // Keep the spot on the visible ice.
+  const vb = drag.svg.viewBox.baseVal;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const x = clamp(Number(drag.spot.dataset.x) + drag.dx, vb.x + 2, vb.x + vb.width - 2);
+  const y = clamp(Number(drag.spot.dataset.y) + drag.dy, vb.y + 2, vb.y + vb.height - 2);
+  const wrap = drag.spot.closest("[data-goalie-url]");
+  postFromBoard(wrap, wrap.dataset.goalieUrl, { x: x.toFixed(1), y: y.toFixed(1) });
+}
+
+document.addEventListener("pointerup", () => endGoalieDrag(true));
+document.addEventListener("pointercancel", () => endGoalieDrag(false));
 
 document.addEventListener("dragstart", (event) => {
   const chip = event.target.closest && event.target.closest(".drill-chip");
@@ -1091,6 +1159,32 @@ document.addEventListener("click", (event) => {
       input.value = value;
     }
   }
+});
+
+// The builder column is swapped in place after each change; <details> marked
+// data-keep (part settings, drill text) stay as the coach left them.
+let keptDetails = null;
+
+document.addEventListener("htmx:beforeSwap", (event) => {
+  const target = event.detail.target;
+  if (target && target.id === "builder-main") {
+    keptDetails = new Map();
+    for (const d of target.querySelectorAll("details[data-keep]")) {
+      keptDetails.set(d.dataset.keep, d.open);
+    }
+  }
+});
+
+document.addEventListener("htmx:afterSwap", () => {
+  if (!keptDetails) {
+    return;
+  }
+  for (const d of document.querySelectorAll("#builder-main details[data-keep]")) {
+    if (keptDetails.has(d.dataset.keep)) {
+      d.open = keptDetails.get(d.dataset.keep);
+    }
+  }
+  keptDetails = null;
 });
 
 // Part forms on full ice: the left/right end fields only matter when the ice

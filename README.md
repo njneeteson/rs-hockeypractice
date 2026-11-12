@@ -47,25 +47,40 @@ drills and practices.
   or half ice. A practice is a list of **parts**. Each part has a length, a
   title, an **ice layout**, an optional rotation time and notes. The builder
   shows each part's rink with a legend beside it. Drag a drill from the
-  library onto a station of the same size, or click a drill and then a
-  station. Without JavaScript, pick a drill from the station's list instead.
-  Parts can be reordered and copied, and a whole practice can be copied to a
-  new date.
-- **PDF** (*Download PDF*): one US Letter page per part. The header has the
-  date, clock time (or elapsed time), part title, its length and the page
-  number. The rink diagram fills the top half, with a **legend** to its right
-  listing every symbol used by the drills on that rink. A strip below gives
-  the layout, rotation, equipment for that part and its notes. The bottom half
-  has each station's drill text in two columns, and the team name is in the
-  footer. Text that doesn't fit is set smaller, then continues on a
-  "(continued)" page.
+  library onto a station it fits, click a drill and then a station, or pick
+  one from the station's list (it is placed as soon as it's picked). Changes
+  update the part in place without reloading the page or losing your place;
+  without JavaScript the same forms post and come back to the part. Each part
+  can have a **goalie warm-up** (two nets with goalies and a coach shooting)
+  at a corner or neutral-zone spot; drag it on the rink to put it anywhere
+  out of the drills' way, and turn it with ⟲ ⟳. *Preview the printed page*
+  shows that part's PDF page. Parts can be reordered and copied, and a whole
+  practice can be copied to a new date.
+- **PDF** (*Download PDF*): one US Letter page per part, never more, so the
+  bench can follow one sheet. A one-line header has the date, clock time (or
+  elapsed time), part title and length; the rink diagram with a **legend** to
+  its right listing every symbol on that rink; a strip with the layout,
+  rotation, goalie warm-up, equipment and notes; then each station's drill
+  text. A one-line footer has the team, practice title and page number. When
+  the text is long it moves to three columns, the diagram gets smaller and the
+  text smaller (down to 5.5 pt); only if it still doesn't fit is it cut short,
+  with a note.
 
 ### Ice sizes and layouts
 
 The rink is a North American 200 × 85 ft sheet. A drill needs an **area**, at
 full width or as one of 2–4 **lanes** running along it. It is drawn on the
 area at the left of the rink (its top lane when split), and the builder moves
-it (shifted, mirrored or turned) onto any station of the same size.
+it (shifted, mirrored or turned) onto a station. A drill fits any station its
+shape fits inside, at the same place on the rink: a lane drill in a wider lane
+or the whole area, an end-zone drill (or end-zone lane) on half ice or a lane
+of it, a half-ice drill in a full-ice lane. A smaller drill sits against the
+boards side of its station. Lanes in
+the bottom half are mirrored so a drill along the boards stays on the boards;
+**Flip top/bottom** on a placed drill turns it over inside its station (boards
+side ↔ open ice, or to the other side of a bigger station), in the builder and
+the PDF. Placing a different drill in
+the station clears the flip.
 
 | Area | Drawn on | Lanes |
 |---|---|---|

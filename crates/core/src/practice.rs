@@ -4,6 +4,7 @@
 //! plan: a block of time whose ice is split by a [`Layout`] into stations,
 //! each running one drill.
 
+use crate::diagram::{Diagram, Item};
 use crate::drill::{Drill, Equipment};
 use crate::rink::{Layout, PracticeIce, Slot};
 use chrono::{NaiveDate, NaiveTime, Timelike};
@@ -78,6 +79,151 @@ pub struct Segment {
     /// Notes for the strip between the diagram and the drill text.
     pub notes: String,
     pub stations: Vec<Station>,
+    /// A goalie warm-up running beside the drills, if any.
+    pub goalies: Option<GoalieWarmup>,
+}
+
+/// A goalie warm-up beside a part's drills: two nets side by side with a
+/// goalie in each, and a coach in front shooting. It is placed anywhere on
+/// the practice's ice, usually in a corner or along the boards in the
+/// neutral zone, wherever it is out of the drills' way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GoalieWarmup {
+    /// The point between the two nets' goal lines.
+    pub x: f32,
+    pub y: f32,
+    /// The direction the nets face (towards the coach), in degrees: 0° faces
+    /// +x (like the left goal), 90° faces down the page.
+    pub rot: f32,
+}
+
+/// How the strip describes a goalie warm-up.
+pub const GOALIE_WARMUP: &str = "warm-up with a coach shooting (2 nets)";
+
+impl GoalieWarmup {
+    /// Spots coaches usually pick, as (key, label, placement). On half ice
+    /// only the spots on that half.
+    pub fn presets(ice: PracticeIce) -> Vec<(&'static str, &'static str, GoalieWarmup)> {
+        let g = |x, y, rot| GoalieWarmup { x, y, rot };
+        let mut v = vec![
+            ("left-top", "Left end, top corner", g(20.0, 20.0, 45.0)),
+            (
+                "left-bottom",
+                "Left end, bottom corner",
+                g(20.0, 65.0, -45.0),
+            ),
+        ];
+        match ice {
+            PracticeIce::Full => v.extend([
+                (
+                    "neutral-top",
+                    "Neutral zone, top boards",
+                    g(100.0, 5.0, 90.0),
+                ),
+                (
+                    "neutral-bottom",
+                    "Neutral zone, bottom boards",
+                    g(100.0, 80.0, -90.0),
+                ),
+                ("right-top", "Right end, top corner", g(180.0, 20.0, 135.0)),
+                (
+                    "right-bottom",
+                    "Right end, bottom corner",
+                    g(180.0, 65.0, -135.0),
+                ),
+            ]),
+            PracticeIce::Half => v.extend([
+                (
+                    "neutral-top",
+                    "Neutral zone, top boards",
+                    g(88.0, 5.0, 90.0),
+                ),
+                (
+                    "neutral-bottom",
+                    "Neutral zone, bottom boards",
+                    g(88.0, 80.0, -90.0),
+                ),
+            ]),
+        }
+        v
+    }
+
+    /// The preset this placement matches, if any.
+    pub fn preset_key(self, ice: PracticeIce) -> Option<&'static str> {
+        Self::presets(ice)
+            .into_iter()
+            .find(|(_, _, g)| *g == self)
+            .map(|(k, _, _)| k)
+    }
+
+    /// Checked placement: on the practice's ice, with the angle in (-180, 180].
+    pub fn validate(mut self, ice: PracticeIce) -> anyhow::Result<Self> {
+        let f = ice.frame();
+        anyhow::ensure!(
+            self.x.is_finite() && self.y.is_finite() && self.rot.is_finite(),
+            "That isn't a place on the ice."
+        );
+        anyhow::ensure!(
+            f.contains(self.x, self.y),
+            "Put the goalie warm-up on the practice's ice."
+        );
+        self.x = (self.x * 2.0).round() / 2.0;
+        self.y = (self.y * 2.0).round() / 2.0;
+        self.rot = self.rot.round().rem_euclid(360.0);
+        if self.rot > 180.0 {
+            self.rot -= 360.0;
+        }
+        Ok(self)
+    }
+
+    /// Where a point given relative to the warm-up (x towards the coach)
+    /// lands on the rink.
+    fn at(self, lx: f32, ly: f32) -> [f32; 2] {
+        let (s, c) = self.rot.to_radians().sin_cos();
+        [self.x + lx * c - ly * s, self.y + lx * s + ly * c]
+    }
+
+    /// The nets, goalies, coach and pucks, drawn like a drill's items.
+    pub fn diagram(self) -> Diagram {
+        let p = |l: (f32, f32)| self.at(l.0, l.1);
+        let player = |l, label: &str| {
+            let [x, y] = p(l);
+            Item::Player {
+                x,
+                y,
+                label: label.into(),
+            }
+        };
+        let net = |l| {
+            let [x, y] = p(l);
+            Item::Net {
+                x,
+                y,
+                rot: self.rot,
+            }
+        };
+        let [px, py] = p((21.0, 4.0));
+        Diagram {
+            items: vec![
+                net((0.0, -7.0)),
+                net((0.0, 7.0)),
+                player((3.5, -7.0), "G"),
+                player((3.5, 7.0), "G"),
+                player((18.0, 0.0), "C"),
+                Item::Pucks { x: px, y: py },
+            ],
+        }
+    }
+
+    /// A rough outline of the warm-up on the rink (for grabbing it on screen).
+    pub fn outline(self) -> [[f32; 2]; 4] {
+        [
+            self.at(-4.5, -11.5),
+            self.at(24.0, -11.5),
+            self.at(24.0, 11.5),
+            self.at(-4.5, 11.5),
+        ]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +265,8 @@ pub struct Station {
     pub drill_id: i64,
     /// Optional note for this station (coach, group, variation).
     pub note: String,
+    /// Draw the drill turned over top ↔ bottom in its slot.
+    pub flip: bool,
 }
 
 impl Segment {
@@ -163,6 +311,8 @@ pub struct PlacedSlot<'a> {
     pub slot: Slot,
     pub drill: Option<&'a Drill>,
     pub note: &'a str,
+    /// The station's drill is flipped (already applied to `slot.xf`).
+    pub flip: bool,
 }
 
 impl Plan {
@@ -200,11 +350,13 @@ impl Plan {
             .enumerate()
             .map(|(index, slot)| {
                 let st = seg.station(index);
+                let flip = st.is_some_and(|s| s.flip);
                 PlacedSlot {
                     index,
-                    slot,
+                    slot: if flip { slot.flipped() } else { slot },
                     drill: st.and_then(|s| self.drills.get(&s.drill_id)),
                     note: st.map(|s| s.note.as_str()).unwrap_or(""),
+                    flip,
                 }
             })
             .collect()
@@ -219,6 +371,9 @@ impl Plan {
                     *totals.entry(*e).or_default() += q;
                 }
             }
+        }
+        if seg.goalies.is_some() {
+            *totals.entry(Equipment::Nets).or_default() += 2;
         }
         sorted(totals)
     }

@@ -10,7 +10,7 @@ use axum::extract::Path;
 use axum::response::Response;
 use axum::routing::post;
 use axum::{Form, Router};
-use localapp_core::practice::SegmentFields;
+use localapp_core::practice::{GoalieWarmup, SegmentFields};
 use localapp_core::rink::{End, Layout, MAX_LANES};
 use serde::Deserialize;
 
@@ -23,6 +23,8 @@ pub fn routes() -> Router<Shared> {
         .route("/segments/{sid}/delete", post(delete))
         .route("/segments/{sid}/stations/{slot}", post(place))
         .route("/segments/{sid}/stations/{slot}/note", post(note))
+        .route("/segments/{sid}/goalies", post(goalies))
+        .route("/segments/{sid}/stations/{slot}/flip", post(flip))
         .route("/segments/{sid}/stations/{slot}/clear", post(clear))
 }
 
@@ -222,6 +224,97 @@ async fn note(
         .db(move |db| {
             db.set_station_note(sid, slot, &f.note)
                 .map(|()| "Note saved.")
+        })
+        .await;
+    Ok(flash::report(&cx.st, &builder(&cx, pid, Some(sid)), result))
+}
+
+#[derive(Deserialize)]
+struct GoalieForm {
+    /// A preset key, "none", or "custom" (keep where it is).
+    #[serde(default)]
+    spot: String,
+    /// Where it was dragged to (rink feet); both or neither.
+    #[serde(default)]
+    x: String,
+    #[serde(default)]
+    y: String,
+    /// Degrees to turn it by.
+    #[serde(default)]
+    turn: String,
+}
+
+/// Place, move, turn or remove the part's goalie warm-up.
+async fn goalies(cx: Ctx, Path(sid): Path<i64>, Form(f): Form<GoalieForm>) -> AppResult<Response> {
+    let seg = cx
+        .db(move |db| db.segment(sid))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let to = builder(&cx, seg.practice_id, Some(sid));
+    let ice = seg.layout.ice();
+    let num = |s: &str| -> AppResult<Option<f32>> {
+        if s.trim().is_empty() {
+            return Ok(None);
+        }
+        s.trim()
+            .parse::<f32>()
+            .map(Some)
+            .map_err(|_| AppError::BadRequest("Not a number.".into()))
+    };
+    let current = seg.goalies;
+    let (place, msg) = if let Some(t) = num(&f.turn)? {
+        let Some(g) = current else {
+            return Ok(flash::error(&cx.st, &to, "Place the goalie warm-up first."));
+        };
+        let rot = g.rot + t;
+        (Some(GoalieWarmup { rot, ..g }), "Goalie warm-up turned.")
+    } else if let (Some(x), Some(y)) = (num(&f.x)?, num(&f.y)?) {
+        // Dragged: a new spot, facing the same way (into the ice for a new one).
+        let rot = current.map_or(if y < 42.5 { 90.0 } else { -90.0 }, |g| g.rot);
+        (Some(GoalieWarmup { x, y, rot }), "Goalie warm-up moved.")
+    } else {
+        match f.spot.as_str() {
+            "" | "none" => (None, "Goalie warm-up removed."),
+            "custom" => (current, "Goalie warm-up kept where it is."),
+            key => {
+                let g = GoalieWarmup::presets(ice)
+                    .into_iter()
+                    .find(|(k, _, _)| *k == key)
+                    .map(|(_, _, g)| g)
+                    .ok_or_else(|| AppError::BadRequest("Unknown spot.".into()))?;
+                (Some(g), "Goalie warm-up placed.")
+            }
+        }
+    };
+    let result = cx
+        .db(move |db| db.set_goalie_warmup(sid, place).map(|()| msg))
+        .await;
+    Ok(flash::report(&cx.st, &to, result))
+}
+
+#[derive(Deserialize)]
+struct FlipForm {
+    /// "1" to flip, anything else to draw the drill as it was made.
+    #[serde(default)]
+    flip: String,
+}
+
+async fn flip(
+    cx: Ctx,
+    Path((sid, slot)): Path<(i64, usize)>,
+    Form(f): Form<FlipForm>,
+) -> AppResult<Response> {
+    let pid = practice_of(&cx, sid).await?;
+    let on = f.flip == "1";
+    let result = cx
+        .db(move |db| {
+            db.set_station_flip(sid, slot, on).map(|()| {
+                if on {
+                    "Drill flipped top to bottom."
+                } else {
+                    "Drill shown as drawn."
+                }
+            })
         })
         .await;
     Ok(flash::report(&cx.st, &builder(&cx, pid, Some(sid)), result))

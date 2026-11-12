@@ -77,7 +77,7 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
     let many = placed.len() > 1;
     for p in &placed {
         match p.drill {
-            Some(d) if d.ice == p.slot.size => d.diagram.render(&mut out, p.slot.xf),
+            Some(d) if d.ice.fits_in(p.slot.size) => d.diagram.render(&mut out, p.slot.xf),
             Some(d) => {
                 let msg = format!(
                     "“{}” is {}, this slot is {}",
@@ -101,8 +101,12 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
 
     if many {
         dividers(&mut out, ice, placed.iter().map(|p| p.slot.area));
-        // Badges already placed count as busy, so neighbours don't pile up on a divider.
-        let mut taken: Vec<(f32, f32)> = Vec::new();
+        // Badges already placed count as busy, so neighbours don't pile up on a
+        // divider; so does the goalie warm-up.
+        let mut taken: Vec<(f32, f32)> = seg
+            .goalies
+            .map(|g| g.diagram().points())
+            .unwrap_or_default();
         for p in &placed {
             let mut busy: Vec<(f32, f32)> = p
                 .drill
@@ -126,9 +130,16 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
             let a = p.slot.area;
             let _ = write!(
                 out,
-                r#"<rect class="drop-slot" data-slot="{}" data-size="{}" x="{}" y="{}" width="{}" height="{}" fill="transparent"><title>{} · {}</title></rect>"#,
+                r#"<rect class="drop-slot" data-slot="{}" data-size="{}" data-accepts="{}" x="{}" y="{}" width="{}" height="{}" fill="transparent"><title>{} · {}</title></rect>"#,
                 p.index,
                 p.slot.size.key(),
+                p.slot
+                    .size
+                    .accepts()
+                    .iter()
+                    .map(|s| s.key())
+                    .collect::<Vec<_>>()
+                    .join(" "),
                 n(a.x),
                 n(a.y),
                 n(a.w),
@@ -138,17 +149,46 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
             );
         }
     }
+
+    // The goalie warm-up goes on top (above the drop targets, so the builder
+    // can drag it), with an invisible outline that makes it easy to grab.
+    if let Some(g) = seg.goalies {
+        let _ = write!(
+            out,
+            r#"<g class="goalie-spot" data-x="{}" data-y="{}" data-rot="{}">"#,
+            n(g.x),
+            n(g.y),
+            n(g.rot)
+        );
+        g.diagram().render(&mut out, rink::Xf::IDENTITY);
+        if interactive {
+            let pts: Vec<String> = g
+                .outline()
+                .iter()
+                .map(|[x, y]| format!("{},{}", n(*x), n(*y)))
+                .collect();
+            let _ = write!(
+                out,
+                r#"<polygon class="goalie-hit" points="{}" fill="transparent"><title>Goalie warm-up: drag to move</title></polygon>"#,
+                pts.join(" ")
+            );
+        }
+        out.push_str("</g>");
+    }
     out
 }
 
-/// The legend for a practice page: every symbol used by the drills on its ice.
+/// The legend for a practice page: every symbol used by the drills on its
+/// ice, and by the goalie warm-up.
 pub fn segment_legend(plan: &Plan, seg: &Segment) -> Vec<LegendEntry> {
     let placed = plan.slots(seg);
+    let goalies = seg.goalies.map(|g| g.diagram());
     diagram::legend(
         placed
             .iter()
-            .filter_map(|p| p.drill.filter(|d| d.ice == p.slot.size))
-            .map(|d| &d.diagram),
+            .filter_map(|p| p.drill.filter(|d| d.ice.fits_in(p.slot.size)))
+            .map(|d| &d.diagram)
+            .chain(goalies.as_ref()),
     )
 }
 

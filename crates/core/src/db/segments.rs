@@ -1,15 +1,19 @@
 //! The `segments` table: the timed parts of a practice, one page each.
 
 use super::Database;
-use crate::practice::{Segment, SegmentFields};
+use crate::practice::{GoalieWarmup, Segment, SegmentFields};
 use crate::rink::Layout;
 use rusqlite::{OptionalExtension, Row, params};
 
-const SELECT: &str =
-    "SELECT id, practice_id, position, title, minutes, layout, rotation, notes FROM segments";
+const SELECT: &str = "SELECT id, practice_id, position, title, minutes, layout, rotation, notes,
+    goalie_x, goalie_y, goalie_rot FROM segments";
 
 fn row(r: &Row<'_>) -> rusqlite::Result<Segment> {
     let layout: String = r.get(5)?;
+    let goalies = match (r.get(8)?, r.get(9)?, r.get(10)?) {
+        (Some(x), Some(y), Some(rot)) => Some(GoalieWarmup { x, y, rot }),
+        _ => None,
+    };
     Ok(Segment {
         id: r.get(0)?,
         practice_id: r.get(1)?,
@@ -20,6 +24,7 @@ fn row(r: &Row<'_>) -> rusqlite::Result<Segment> {
         rotation: r.get(6)?,
         notes: r.get(7)?,
         stations: Vec::new(),
+        goalies,
     })
 }
 
@@ -106,7 +111,7 @@ impl Database {
             let slots = f.layout.slots();
             for st in &seg.stations {
                 let fits = match (slots.get(st.slot), self.drill(st.drill_id)?) {
-                    (Some(slot), Some(d)) => slot.size == d.ice,
+                    (Some(slot), Some(d)) => d.ice.fits_in(slot.size),
                     _ => false,
                 };
                 if !fits {
@@ -194,6 +199,28 @@ impl Database {
         Ok(new_id)
     }
 
+    /// Place (or with `None`, remove) a segment's goalie warm-up. It must be
+    /// on the practice's ice.
+    pub fn set_goalie_warmup(&self, id: i64, g: Option<GoalieWarmup>) -> anyhow::Result<()> {
+        let seg = self
+            .segment(id)?
+            .ok_or_else(|| anyhow::anyhow!("That page doesn't exist."))?;
+        let g = match g {
+            Some(g) => Some(g.validate(seg.layout.ice())?),
+            None => None,
+        };
+        self.write_goalies(id, g)?;
+        self.touch_practice(seg.practice_id)
+    }
+
+    fn write_goalies(&self, id: i64, g: Option<GoalieWarmup>) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE segments SET goalie_x = ?2, goalie_y = ?3, goalie_rot = ?4 WHERE id = ?1",
+            params![id, g.map(|g| g.x), g.map(|g| g.y), g.map(|g| g.rot)],
+        )?;
+        Ok(())
+    }
+
     /// Insert a copy of `seg` into `practice_id` (no transaction of its own).
     pub(super) fn copy_segment(
         &self,
@@ -215,10 +242,12 @@ impl Database {
             ],
         )?;
         let id = self.conn.last_insert_rowid();
+        self.write_goalies(id, seg.goalies)?;
         for st in &seg.stations {
             self.conn.execute(
-                "INSERT INTO stations (segment_id, slot, drill_id, note) VALUES (?1, ?2, ?3, ?4)",
-                params![id, st.slot, st.drill_id, st.note],
+                "INSERT INTO stations (segment_id, slot, drill_id, note, flip)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, st.slot, st.drill_id, st.note, st.flip],
             )?;
         }
         Ok(id)
@@ -245,6 +274,59 @@ mod tests {
             rotation: Some(4),
             notes: "Whistle to rotate".into(),
         }
+    }
+
+    #[test]
+    fn goalie_warmup_is_placed_copied_and_drawn() {
+        let db = Database::in_memory().unwrap();
+        let p = practice(&db, PracticeIce::Half);
+        let s = db
+            .add_segment(p, fields("Stations", Layout::Half(QUARTERS)))
+            .unwrap();
+        let presets = GoalieWarmup::presets(PracticeIce::Half);
+        assert!(presets.iter().all(|(_, _, g)| g.x < 100.0), "half ice only");
+        let corner = presets[0].2;
+        db.set_goalie_warmup(s, Some(corner)).unwrap();
+        let seg = db.segment(s).unwrap().unwrap();
+        assert_eq!(seg.goalies, Some(corner));
+        assert_eq!(corner.preset_key(PracticeIce::Half), Some("left-top"));
+
+        // Off the half: refused. Angles are kept in (-180, 180].
+        let off = GoalieWarmup {
+            x: 150.0,
+            y: 40.0,
+            rot: 0.0,
+        };
+        assert!(db.set_goalie_warmup(s, Some(off)).is_err());
+        let turned = GoalieWarmup {
+            x: 50.2,
+            y: 40.0,
+            rot: 270.0,
+        };
+        db.set_goalie_warmup(s, Some(turned)).unwrap();
+        let g = db.segment(s).unwrap().unwrap().goalies.unwrap();
+        assert_eq!((g.x, g.rot), (50.0, -90.0));
+        assert_eq!(g.preset_key(PracticeIce::Half), None);
+
+        // Two nets, two goalies and a coach; in the drawing, legend and equipment.
+        let d = g.diagram();
+        let nets = d
+            .items
+            .iter()
+            .filter(|i| matches!(i, crate::diagram::Item::Net { .. }));
+        assert_eq!(nets.count(), 2);
+        let copy = db.duplicate_segment(s).unwrap();
+        assert_eq!(db.segment(copy).unwrap().unwrap().goalies, Some(g));
+        let plan = db.plan(p).unwrap().unwrap();
+        let svg = crate::board::segment_svg(&plan, &plan.segments[0], true);
+        assert!(svg.contains("goalie-spot") && svg.contains("goalie-hit"));
+        let legend = crate::board::segment_legend(&plan, &plan.segments[0]);
+        assert!(legend.iter().any(|e| e.label.starts_with("Goalie")));
+        let eq = plan.segment_equipment(&plan.segments[0]);
+        assert!(eq.contains(&(crate::drill::Equipment::Nets, 2)));
+
+        db.set_goalie_warmup(s, None).unwrap();
+        assert_eq!(db.segment(s).unwrap().unwrap().goalies, None);
     }
 
     #[test]

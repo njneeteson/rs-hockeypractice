@@ -34,6 +34,15 @@ overview and layout.
   pre-lanes names (`"quarter"`, `"halves"`, …).
 - Every symbol a diagram can contain needs a legend entry in
   `diagram::legend`; PDF pages and the builder show only the symbols in use.
+- A drill fits a station when `IceSize::fits_in` says so (its frame inside the
+  slot's, same place on the rink); never compare sizes with `==` for
+  placement. Drop targets list what they take in `data-accepts`.
+- A part is always exactly one PDF page: `pdf::fits` lists the layouts tried
+  (text size, columns, diagram height). Don't reintroduce continuation pages.
+- The practice builder's forms live inside `#builder-main`, which htmx swaps
+  in place (plus `#practice-head`, `#practice-tiles`, `#toasts` out of band).
+  New builder controls go inside it so they keep the scroll position;
+  `<details>` that should stay open across swaps get `data-keep`.
 
 ## Conventions
 

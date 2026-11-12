@@ -223,12 +223,16 @@ async fn practices_are_built_and_printed() {
     let r = app
         .post(&place(1), &[("drill_id", &half.to_string())])
         .await;
-    assert!(
-        app.get(r.redirect())
-            .await
-            .body
-            .contains("needs a quarter ice drill")
-    );
+    assert!(app.get(r.redirect()).await.body.contains("t fit in the "));
+    // Smaller drills fit bigger stations: the whole half takes quarter drills.
+    let slot0 = page
+        .split("data-slot=\"0\"")
+        .nth(1)
+        .and_then(|s| s.split('>').next())
+        .unwrap()
+        .to_string();
+    assert!(slot0.contains("data-accepts=\"half "), "{slot0}");
+    assert!(slot0.contains(" half-2 "), "{slot0}");
     app.post(&place(0), &[("drill_id", &half.to_string())])
         .await;
     let r = app
@@ -242,6 +246,32 @@ async fn practices_are_built_and_printed() {
     );
     app.post(&format!("{}/note", place(2)), &[("note", "Coach Pat")])
         .await;
+
+    // Flip the quarter drill top to bottom, and back.
+    let before = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    assert!(before.contains("⇅ Flip top/bottom"));
+    let r = app
+        .post(&format!("{}/flip", place(2)), &[("flip", "1")])
+        .await;
+    let flipped = app.get(r.redirect()).await.body;
+    assert!(flipped.contains("Drill flipped top to bottom."));
+    assert!(flipped.contains("⇅ Flipped: undo"));
+    let board = |page: &str| page.split("board-wrap").nth(1).unwrap_or("").to_string();
+    assert_ne!(board(&before), board(&flipped), "the drawing changes");
+    let r = app
+        .post(&format!("{}/flip", place(2)), &[("flip", "0")])
+        .await;
+    let back = app.get(r.redirect()).await.body;
+    assert!(back.contains("Drill shown as drawn."));
+    let r = app
+        .post(&format!("{}/flip", place(3)), &[("flip", "1")])
+        .await;
+    assert!(
+        app.get(r.redirect())
+            .await
+            .body
+            .contains("before flipping it")
+    );
 
     // Rotation and strip notes.
     app.post(
@@ -469,4 +499,77 @@ async fn lane_drills_and_rotated_equipment_are_saved() {
         )
         .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn goalie_warmup_and_page_preview() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    let quarter = new_drill(&mut app, "Corner battles", "quarter").await;
+    let r = app
+        .post(
+            &url("/practices"),
+            &[
+                ("new_team", "Riverside U13"),
+                ("date", "2026-11-18"),
+                ("ice", "half"),
+            ],
+        )
+        .await;
+    let pid = id_from(r.redirect(), "/practices/");
+    let r = app
+        .post(
+            &url(&format!("/practices/{pid}/segments")),
+            &[("title", "Stations"), ("minutes", "12"), ("left", "h1")],
+        )
+        .await;
+    let sid = id_from(r.redirect(), "#seg-");
+    // A quarter-ice drill fits the whole half.
+    app.post(
+        &url(&format!("/segments/{sid}/stations/0")),
+        &[("drill_id", &quarter.to_string())],
+    )
+    .await;
+
+    let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    assert!(page.contains("Goalie warm-up"));
+    assert!(!page.contains("goalie-spot"), "none until placed");
+    assert!(
+        page.contains("id=\"builder-main\""),
+        "updated in place with htmx"
+    );
+
+    // Pick a preset spot, turn it, drag it, then remove it.
+    let goalies = url(&format!("/segments/{sid}/goalies"));
+    let r = app.post(&goalies, &[("spot", "left-top")]).await;
+    let page = app.get(r.redirect()).await.body;
+    assert!(page.contains("Goalie warm-up placed."));
+    assert!(page.contains("goalie-spot") && page.contains("Goalies: "));
+    assert!(page.contains("Nets 2"), "the nets count as equipment");
+    let r = app.post(&goalies, &[("turn", "45")]).await;
+    assert!(app.get(r.redirect()).await.body.contains("turned"));
+    let r = app.post(&goalies, &[("x", "60"), ("y", "80.2")]).await;
+    let page = app.get(r.redirect()).await.body;
+    assert!(page.contains("Goalie warm-up moved."));
+    assert!(page.contains("Where you dragged it"));
+    let seg = app.st.db(move |db| db.segment(sid)).await.unwrap().unwrap();
+    let g = seg.goalies.unwrap();
+    assert_eq!((g.x, g.y, g.rot), (60.0, 80.0, 90.0));
+    // Off the half-ice sheet: refused.
+    let r = app.post(&goalies, &[("x", "150"), ("y", "40")]).await;
+    assert!(app.get(r.redirect()).await.body.contains("practice's ice"));
+    let r = app.post(&goalies, &[("spot", "none")]).await;
+    assert!(app.get(r.redirect()).await.body.contains("removed"));
+
+    // The printed page as an image, linked from the builder.
+    let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    let src = links(&page, "src", "/preview/");
+    assert_eq!(src.len(), 1);
+    let img = app.get(&src[0]).await;
+    assert_eq!(img.status, StatusCode::OK);
+    assert!(img.body.starts_with("<svg") && !img.body.contains("<text"));
+    let missing = app
+        .get(&url(&format!("/practices/{pid}/preview/999")))
+        .await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
 }

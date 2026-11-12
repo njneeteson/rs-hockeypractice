@@ -201,7 +201,30 @@ impl IceSize {
         Rect::new(r.x, r.y, r.w, r.h / f32::from(self.lanes))
     }
 
-    /// Whether some layout on `ice` has a slot of this size.
+    /// Whether a drill of this size can run in a station of size `slot`: its
+    /// frame lies inside the slot's frame, at the same place on the rink. Both
+    /// frames are drawn from the top boards, so the slot's transform places
+    /// the drill as it is, against the boards side of the station.
+    pub fn fits_in(self, slot: IceSize) -> bool {
+        let (d, s) = (self.frame(), slot.frame());
+        const EPS: f32 = 1e-3;
+        d.x >= s.x - EPS && d.x + d.w <= s.x + s.w + EPS && d.h <= s.h + EPS
+    }
+
+    /// The drill sizes that fit in a station of this size, largest first.
+    pub fn accepts(self) -> Vec<IceSize> {
+        let mut v: Vec<IceSize> = IceSize::all()
+            .into_iter()
+            .filter(|d| d.fits_in(self))
+            .collect();
+        v.sort_by(|a, b| {
+            let area = |s: IceSize| s.frame().w * s.frame().h;
+            area(*b).total_cmp(&area(*a))
+        });
+        v
+    }
+
+    /// Whether some layout on `ice` has a slot this size fits in.
     pub fn fits(self, ice: PracticeIce) -> bool {
         match ice {
             PracticeIce::Full => true,
@@ -292,6 +315,16 @@ pub struct Slot {
     pub area: Rect,
     pub xf: Xf,
     pub name: String,
+}
+
+impl Slot {
+    /// The same slot with the drill turned over top ↔ bottom inside it, so
+    /// what ran along the boards runs through open ice and the reverse.
+    pub fn flipped(mut self) -> Slot {
+        let a = self.area;
+        self.xf = self.xf.then(Xf::new(1.0, -1.0, 0.0, 2.0 * a.y + a.h));
+        self
+    }
 }
 
 /// The transform that moves the top lane of `n` onto lane `i` (0 = top).
@@ -832,6 +865,72 @@ mod tests {
         .slots();
         assert_eq!(q[1].xf, Xf::MIRROR_X);
         assert_eq!(q[2].xf, Xf::ROT180);
+    }
+
+    #[test]
+    fn smaller_drills_fit_larger_stations() {
+        let k = |s: &str| IceSize::from_key(s).unwrap();
+        // Narrower lanes fit wider lanes and the whole area.
+        assert!(k("half-4").fits_in(k("half-3")));
+        assert!(k("half-3").fits_in(k("half-2")));
+        assert!(k("half-2").fits_in(k("half")));
+        assert!(!k("half-2").fits_in(k("half-3")));
+        // End-zone drills fit half ice, and half-ice drills fit full-ice lanes.
+        assert!(k("zone").fits_in(k("half")));
+        assert!(k("zone-2").fits_in(k("half-2")));
+        assert!(k("zone-3").fits_in(k("half-2")));
+        assert!(!k("zone").fits_in(k("half-2")));
+        assert!(k("half").fits_in(k("full")));
+        assert!(k("half-2").fits_in(k("full-2")));
+        assert!(k("neutral").fits_in(k("full")));
+        assert!(!k("neutral").fits_in(k("full-4")));
+        assert!(k("neutral_half").fits_in(k("half")));
+        assert!(k("neutral_half").fits_in(k("neutral")));
+        // But not a different part of the rink, or a bigger shape.
+        assert!(!k("neutral").fits_in(k("half")));
+        assert!(!k("half").fits_in(k("zone")));
+        assert!(!k("full").fits_in(k("half")));
+        for s in IceSize::all() {
+            assert!(s.fits_in(s));
+            assert_eq!(s.accepts()[0], s, "the slot's own size comes first");
+        }
+        // Every drawing that fits stays inside the station once placed.
+        for layout in Layout::all_for(PracticeIce::Full) {
+            for slot in layout.slots() {
+                for d in slot.size.accepts() {
+                    let r = slot.xf.rect(d.frame());
+                    let a = slot.area.pad(1e-3);
+                    assert!(a.contains(r.x, r.y) && a.contains(r.x + r.w, r.y + r.h));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flipped_slots_stay_in_place() {
+        for layout in Layout::all_for(PracticeIce::Full) {
+            for s in layout.slots() {
+                let f = s.clone().flipped();
+                let frame = s.size.frame();
+                let near = |a: Xf, b: Xf| {
+                    [a.sx - b.sx, a.sy - b.sy, a.dx - b.dx, a.dy - b.dy]
+                        .iter()
+                        .all(|d| d.abs() < 1e-3)
+                };
+                let (a, b) = (f.xf.rect(frame), s.xf.rect(frame));
+                let key = layout.key();
+                assert!(
+                    (a.y - b.y).abs() < 1e-3 && (a.h - b.h).abs() < 1e-3,
+                    "{key}"
+                );
+                assert_eq!((a.x, a.w), (b.x, b.w), "{key}");
+                assert!(near(f.clone().flipped().xf, s.xf), "{key}");
+                // Top and bottom swap.
+                let (_, y0) = s.xf.apply(frame.x, frame.y);
+                let (_, y1) = f.xf.apply(frame.x, frame.y);
+                assert!((y0 + y1 - (2.0 * s.area.y + s.area.h)).abs() < 1e-3);
+            }
+        }
     }
 
     #[test]

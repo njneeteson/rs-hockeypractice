@@ -114,7 +114,9 @@ impl Database {
             if seg.layout.ice() != f.ice {
                 tx.execute("DELETE FROM stations WHERE segment_id = ?1", [seg.id])?;
                 tx.execute(
-                    "UPDATE segments SET layout = ?2 WHERE id = ?1",
+                    "UPDATE segments SET layout = ?2,
+                        goalie_x = NULL, goalie_y = NULL, goalie_rot = NULL
+                     WHERE id = ?1",
                     params![seg.id, Layout::default_for(f.ice).key()],
                 )?;
                 reset += 1;
