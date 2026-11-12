@@ -123,6 +123,17 @@ pub fn svg(markup: String) -> Markup {
     maud::PreEscaped(markup)
 }
 
+/// A diagram legend: each symbol with what it means.
+pub fn legend_list(entries: &[localapp_core::diagram::LegendEntry]) -> Markup {
+    html! {
+        ul class="legend" {
+            @for e in entries {
+                li class="legend-item" { (svg(e.svg())) span { (e.label) } }
+            }
+        }
+    }
+}
+
 /// A numbered station badge.
 pub fn badge(number: usize) -> Markup {
     html! { span class="badge" aria-label={ "Station " (number) } { (number) } }

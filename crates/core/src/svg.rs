@@ -13,7 +13,10 @@ pub mod colour {
     pub const RED: &str = "#d0312d";
     pub const BLUE: &str = "#1f57c3";
     pub const CREASE: &str = "#cfe6fb";
-    pub const NET: &str = "#e6e6e6";
+    pub const NET: &str = "#f4f6f8";
+    pub const NET_MESH: &str = "#9aa4ae";
+    pub const BARRIER: &str = "#f2c230";
+    pub const DANGLER: &str = "#7b5cd6";
     pub const INK: &str = "#151515";
     pub const CONE: &str = "#f08a24";
     pub const SLOT: &str = "#6b6b6b";

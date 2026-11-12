@@ -194,10 +194,10 @@ pub(crate) mod tests {
     fn crud_and_filters() {
         let db = Database::in_memory().unwrap();
         let a = db
-            .create_drill(sample("Pass and follow", IceSize::Half))
+            .create_drill(sample("Pass and follow", IceSize::HALF))
             .unwrap();
         let b = db
-            .create_drill(sample("Angling", IceSize::Quarter))
+            .create_drill(sample("Angling", IceSize::QUARTER))
             .unwrap();
         let d = db.drill(a).unwrap().unwrap();
         assert_eq!(d.equipment_qty(Equipment::Pucks), 20);
@@ -206,7 +206,7 @@ pub(crate) mod tests {
         let all = db.drills(&DrillFilter::default()).unwrap();
         assert_eq!(all.iter().map(|d| d.id).collect::<Vec<_>>(), vec![b, a]);
         let f = DrillFilter {
-            ice: Some(IceSize::Quarter),
+            ice: Some(IceSize::QUARTER),
             ..Default::default()
         };
         assert_eq!(db.drills(&f).unwrap().len(), 1);
@@ -217,13 +217,13 @@ pub(crate) mod tests {
         let found = db.drills(&f).unwrap();
         assert_eq!(found.iter().map(|d| d.id).collect::<Vec<_>>(), vec![b]);
 
-        let mut changed = sample("Pass and follow 2", IceSize::Full);
+        let mut changed = sample("Pass and follow 2", IceSize::FULL);
         changed.equipment = vec![(Equipment::Nets, 2)];
         db.update_drill(a, changed).unwrap();
         let d = db.drill(a).unwrap().unwrap();
         assert_eq!(
             (d.ice, d.equipment.clone()),
-            (IceSize::Full, vec![(Equipment::Nets, 2)])
+            (IceSize::FULL, vec![(Equipment::Nets, 2)])
         );
 
         let c = db.duplicate_drill(a).unwrap();

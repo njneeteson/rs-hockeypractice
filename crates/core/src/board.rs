@@ -4,7 +4,7 @@
 //! The same SVG goes into web pages (themed by CSS classes) and into the PDF
 //! (using the print colours in the presentation attributes).
 
-use crate::diagram::Diagram;
+use crate::diagram::{self, Diagram, LegendEntry};
 use crate::practice::{Plan, Segment};
 use crate::rink::{self, IceSize, PracticeIce, Rect};
 use crate::svg::{colour as c, esc, n, text};
@@ -32,7 +32,7 @@ pub fn drill_svg(ice: IceSize, diagram: &Diagram, label: &str, extra: &str) -> S
     let mut out = String::new();
     open(&mut out, view(ice.frame()), "rink-svg", label, extra);
     rink::markings(&mut out);
-    diagram.render(&mut out, rink::Xf::Identity);
+    diagram.render(&mut out, rink::Xf::IDENTITY);
     out.push_str("</svg>");
     out
 }
@@ -88,7 +88,12 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
                 centre_note(&mut out, p.slot.area, &msg, c::RED);
             }
             None => {
-                let msg = format!("Open: {}", p.slot.size.label().to_lowercase());
+                // Narrow slots (the 25 ft neutral strip) just say "Open".
+                let msg = if p.slot.area.w < 40.0 {
+                    "Open".to_string()
+                } else {
+                    format!("Open: {}", p.slot.size.label().to_lowercase())
+                };
                 centre_note(&mut out, p.slot.area, &msg, c::MUTED);
             }
         }
@@ -96,8 +101,10 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
 
     if many {
         dividers(&mut out, ice, placed.iter().map(|p| p.slot.area));
+        // Badges already placed count as busy, so neighbours don't pile up on a divider.
+        let mut taken: Vec<(f32, f32)> = Vec::new();
         for p in &placed {
-            let busy: Vec<(f32, f32)> = p
+            let mut busy: Vec<(f32, f32)> = p
                 .drill
                 .map(|d| {
                     d.diagram
@@ -107,7 +114,9 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
                         .collect()
                 })
                 .unwrap_or_default();
+            busy.extend(&taken);
             let (x, y) = badge_spot(p.slot.area, &busy);
+            taken.push((x, y));
             badge(&mut out, x, y, p.index + 1);
         }
     }
@@ -124,12 +133,23 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
                 n(a.y),
                 n(a.w),
                 n(a.h),
-                esc(p.slot.name),
-                esc(p.slot.size.label())
+                esc(&p.slot.name),
+                esc(&p.slot.size.label())
             );
         }
     }
     out
+}
+
+/// The legend for a practice page: every symbol used by the drills on its ice.
+pub fn segment_legend(plan: &Plan, seg: &Segment) -> Vec<LegendEntry> {
+    let placed = plan.slots(seg);
+    diagram::legend(
+        placed
+            .iter()
+            .filter_map(|p| p.drill.filter(|d| d.ice == p.slot.size))
+            .map(|d| &d.diagram),
+    )
 }
 
 fn centre_note(out: &mut String, area: Rect, msg: &str, fill: &str) {
@@ -252,7 +272,7 @@ mod tests {
         let d = Diagram {
             items: vec![Item::Cone { x: 10.0, y: 10.0 }],
         };
-        let svg = drill_svg(IceSize::Quarter, &d, "Test <drill>", "");
+        let svg = drill_svg(IceSize::QUARTER, &d, "Test <drill>", "");
         assert!(svg.contains(r#"viewBox="-1.5 -1.5 103 45.5""#), "{svg}");
         assert!(svg.contains("Test &lt;drill&gt;"));
         assert!(svg.contains("d-cone"));

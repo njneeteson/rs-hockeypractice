@@ -11,7 +11,7 @@ use axum::response::Response;
 use axum::routing::post;
 use axum::{Form, Router};
 use localapp_core::practice::SegmentFields;
-use localapp_core::rink::Layout;
+use localapp_core::rink::{End, Layout, MAX_LANES};
 use serde::Deserialize;
 
 pub fn routes() -> Router<Shared> {
@@ -31,7 +31,15 @@ struct SegmentForm {
     #[serde(default)]
     title: String,
     minutes: String,
+    /// A layout key; or else `whole`, `left` and `right` (see `layout_fields`).
+    #[serde(default)]
     layout: String,
+    #[serde(default)]
+    whole: String,
+    #[serde(default)]
+    left: String,
+    #[serde(default)]
+    right: String,
     #[serde(default)]
     rotation: String,
     #[serde(default)]
@@ -39,6 +47,23 @@ struct SegmentForm {
 }
 
 impl SegmentForm {
+    fn layout(&self) -> AppResult<Layout> {
+        let bad = |what: &str, v: &str| AppError::bad_request(format!("Unknown {what} “{v}”."));
+        if !self.layout.trim().is_empty() {
+            return Layout::from_key(&self.layout).ok_or_else(|| bad("layout", &self.layout));
+        }
+        let end = |v: &str| End::from_key(v).ok_or_else(|| bad("ice split", v));
+        let left = end(&self.left)?;
+        Ok(match self.whole.trim() {
+            "" => Layout::Half(left),
+            "ends" => Layout::Ends(left, end(&self.right)?),
+            n => match n.parse::<u8>() {
+                Ok(n) if (1..=MAX_LANES).contains(&n) => Layout::Full(n),
+                _ => return Err(bad("layout", n)),
+            },
+        })
+    }
+
     fn fields(&self) -> AppResult<SegmentFields> {
         let rotation = match self.rotation.trim() {
             "" => None,
@@ -47,7 +72,7 @@ impl SegmentForm {
         Ok(SegmentFields {
             title: self.title.clone(),
             minutes: form::number(&self.minutes, "Minutes")?,
-            layout: form::key::<Layout>(&self.layout, "layout")?,
+            layout: self.layout()?,
             rotation,
             notes: self.notes.clone(),
         })

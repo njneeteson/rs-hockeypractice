@@ -33,47 +33,59 @@ drills and practices.
 - **Drill library** (`/drills`): each drill has a name, category, suggested
   minutes, the **ice it needs**, how to run it, key teaching points (one per
   line) and equipment with quantities. Its diagram is drawn in the browser:
-  players (X, O, C, G, F, D or any label), cones, pucks, puck piles, tires,
-  extra nets, text, and lines for skating, skating backward, carrying the
-  puck, passes, shots and crossovers, ending in an arrow, a stop or nothing.
-  *Add example drills* on an empty library adds one drill of each size.
+  players (X, O, F, D or any label; coaches C and goalies G are circled),
+  nets, cones, pucks, puck piles, tires, barriers, danglers and text. Nets,
+  barriers and danglers can be turned to any angle (drag the round handle, or
+  R / Shift+R), and a net dropped near a goal line snaps onto it; the rink
+  itself has no nets. Lines follow the usual drill-sheet symbols: skate (solid),
+  skate with the puck (wavy), pass (dashed), shot (double), skate backward
+  (cups), backward with the puck (cups and dots), lateral steps (ticks),
+  crossovers (X's), goalie pad slide and butterfly slide, ending in an arrow,
+  a stop (two bars) or nothing. *Add example drills* on an empty library adds
+  a drill for each main area, a lane drill and a goalie drill.
 - **Practices** (`/practices`): a date, optional start time, a team, and full
   or half ice. A practice is a list of **parts**. Each part has a length, a
   title, an **ice layout**, an optional rotation time and notes. The builder
-  shows each part's rink. Drag a drill from the library onto a station of the
-  same size, or click a drill and then a station. Without JavaScript, pick a
-  drill from the station's list instead. Parts can be reordered and copied,
-  and a whole practice can be copied to a new date.
+  shows each part's rink with a legend beside it. Drag a drill from the
+  library onto a station of the same size, or click a drill and then a
+  station. Without JavaScript, pick a drill from the station's list instead.
+  Parts can be reordered and copied, and a whole practice can be copied to a
+  new date.
 - **PDF** (*Download PDF*): one US Letter page per part. The header has the
   date, clock time (or elapsed time), part title, its length and the page
-  number. The rink diagram fills the top half. A strip below it gives the
-  layout, rotation, equipment for that part and its notes. The bottom half has
-  each station's drill text in two columns, and the team name is in the footer.
-  Text that doesn't fit is set smaller, then continues on a "(continued)" page.
+  number. The rink diagram fills the top half, with a **legend** to its right
+  listing every symbol used by the drills on that rink. A strip below gives
+  the layout, rotation, equipment for that part and its notes. The bottom half
+  has each station's drill text in two columns, and the team name is in the
+  footer. Text that doesn't fit is set smaller, then continues on a
+  "(continued)" page.
 
 ### Ice sizes and layouts
 
-The rink is a North American 200 × 85 ft sheet. A drill is drawn on the part of
-the rink its size needs, and the builder moves it (mirrored or turned) onto any
-slot of that size:
+The rink is a North American 200 × 85 ft sheet. A drill needs an **area**, at
+full width or as one of 2–4 **lanes** running along it. It is drawn on the
+area at the left of the rink (its top lane when split), and the builder moves
+it (shifted, mirrored or turned) onto any station of the same size.
 
-| Drill size | Drawn on |
-|---|---|
-| Full ice | the whole sheet |
-| Half ice | the left half, end boards to red line |
-| End zone | the left end zone, end boards to blue line |
-| Neutral zone | between the blue lines |
-| Quarter ice | the top-left quarter (one side of one half) |
+| Area | Drawn on | Lanes |
+|---|---|---|
+| Full ice | the whole sheet | 1–4 |
+| Half ice | the left half, end boards to red line (2 lanes = quarter ice) | 1–4 |
+| End zone | the left end zone, end boards to blue line | 1–4 |
+| Neutral zone | between the blue lines | – |
+| Neutral zone to the red line | blue line to red line | – |
 
-| Layout | Stations |
-|---|---|
-| Full ice: one drill | full |
-| Two halves | half + half |
-| Three zones | end zone + neutral zone + end zone |
-| Four quarters | 4 × quarter |
-| Left half + two quarters / two quarters + right half | half + 2 × quarter |
-| Half ice: one drill *(half-ice practices)* | half |
-| Half ice split in two quarters *(half-ice practices)* | 2 × quarter |
+A part's layout on **full ice** is either the whole sheet as one area or in 2–4
+lanes, or the ice split at the red line with each end split its own way. On
+**half ice** it is how that one end is split. An end is split as:
+
+- the whole half, or the half in 2–4 lanes;
+- the end zone (whole or in 2–4 lanes) plus the neutral zone as its own
+  station. When both ends of a full sheet split it off, the neutral zone
+  between the blue lines is one station.
+
+So half ice holds up to five stations (four end-zone lanes and the neutral
+zone), and full ice up to nine.
 
 A drill's text and diagram live in the library, so editing a drill updates
 every practice that uses it. A drill in use can't be deleted or change size;
@@ -127,7 +139,7 @@ duplicate it instead.
 │   │       ├── lib.rs
 │   │       ├── enum_macro.rs   str_enum!: enums with a storage key and a UI label
 │   │       ├── rink.rs         rink geometry + markings, ice sizes, layouts and their slots
-│   │       ├── diagram.rs      a drill's drawing (JSON) and how each item and line is drawn
+│   │       ├── diagram.rs      a drill's drawing (JSON), how each item and line is drawn, legends
 │   │       ├── drill.rs        drills, categories, equipment
 │   │       ├── practice.rs     teams, practices, parts (segments), stations, Plan
 │   │       ├── board.rs        complete SVG diagrams (one drill; a practice page)

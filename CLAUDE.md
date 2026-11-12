@@ -26,6 +26,14 @@ overview and layout.
   the same font, so keep `svg::FONT` and the fonts in `crates/core/fonts` in step.
 - Drawn SVG elements carry print colours as attributes and a class; web
   theming overrides only via those classes in `app.css`.
+- Rotated items (net, barrier, dangler) are drawn point by point from their
+  `rot`, not with SVG transforms, so slot mirrors and turns work the same in
+  Rust and JS. New asymmetric items need a `rot` and an entry in `ROTATABLE`.
+- `IceSize` (area + lanes) and `Layout` are structs, not `str_enum!`: their
+  keys are compound (`"half-3"`, `"ends-h1-z3"`). `from_key` also accepts the
+  pre-lanes names (`"quarter"`, `"halves"`, …).
+- Every symbol a diagram can contain needs a legend entry in
+  `diagram::legend`; PDF pages and the builder show only the symbols in use.
 
 ## Conventions
 

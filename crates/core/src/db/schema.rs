@@ -76,8 +76,33 @@ CREATE TABLE stations (
 CREATE INDEX stations_drill ON stations(drill_id);
 "#;
 
+/// Lanes and a split-off neutral zone: drill sizes and page layouts get new
+/// keys. Old four-quarter pages listed the top quarters first; now each end is
+/// listed top to bottom, so their second and third stations swap.
+const V3: &str = r#"
+UPDATE drills SET ice = 'half-2' WHERE ice = 'quarter';
+
+UPDATE stations SET slot = slot + 100
+ WHERE slot IN (1, 2)
+   AND segment_id IN (SELECT id FROM segments WHERE layout = 'quarters');
+UPDATE stations SET slot = CASE slot WHEN 101 THEN 2 ELSE 1 END
+ WHERE slot IN (101, 102)
+   AND segment_id IN (SELECT id FROM segments WHERE layout = 'quarters');
+
+UPDATE segments SET layout = CASE layout
+    WHEN 'full' THEN 'full-1'
+    WHEN 'halves' THEN 'ends-h1-h1'
+    WHEN 'zones' THEN 'ends-z1-z1'
+    WHEN 'quarters' THEN 'ends-h2-h2'
+    WHEN 'half_quarters' THEN 'ends-h1-h2'
+    WHEN 'quarters_half' THEN 'ends-h2-h1'
+    WHEN 'half' THEN 'half-h1'
+    WHEN 'half_split' THEN 'half-h2'
+    ELSE layout END;
+"#;
+
 /// Ordered migrations; index + 1 is the resulting schema version.
-const MIGRATIONS: &[&str] = &[V1, V2];
+const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 pub fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "foreign_keys", true)?;
@@ -104,5 +129,47 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(version, MIGRATIONS.len());
+    }
+
+    #[test]
+    fn v3_renames_sizes_and_layouts() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V1).unwrap();
+        conn.execute_batch(V2).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute_batch(
+            "INSERT INTO teams (id, name) VALUES (1, 'T');
+             INSERT INTO drills (id, name, ice, category) VALUES (1, 'Q', 'quarter', 'other');
+             INSERT INTO practices (id, team_id, date) VALUES (1, 1, '2026-11-11');
+             INSERT INTO segments (id, practice_id, position, minutes, layout)
+                VALUES (1, 1, 0, 10, 'quarters'), (2, 1, 1, 10, 'zones');
+             INSERT INTO stations (segment_id, slot, drill_id)
+                VALUES (1, 0, 1), (1, 1, 1), (1, 3, 1);",
+        )
+        .unwrap();
+        conn.execute("UPDATE stations SET note = 'top right' WHERE slot = 1", [])
+            .unwrap();
+        migrate(&mut conn).unwrap();
+        let ice: String = conn
+            .query_row("SELECT ice FROM drills", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ice, "half-2");
+        let layouts: Vec<String> = conn
+            .prepare("SELECT layout FROM segments ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(layouts, vec!["ends-h2-h2", "ends-z1-z1"]);
+        // The top-right quarter is now the third station (left top, left bottom, right top…).
+        let slot: i64 = conn
+            .query_row(
+                "SELECT slot FROM stations WHERE note = 'top right'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(slot, 2);
     }
 }

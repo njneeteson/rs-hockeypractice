@@ -158,8 +158,16 @@ document.addEventListener("htmx:beforeSwap", () => {
 const SVG_NS = "http://www.w3.org/2000/svg";
 const INK = "#151515";
 const RED = "#d0312d";
-const NET = "#e6e6e6";
+const ICE = "#ffffff";
+const NET = "#f4f6f8";
+const NET_MESH = "#9aa4ae";
 const CONE = "#f08a24";
+const BARRIER = "#f2c230";
+const DANGLER = "#7b5cd6";
+const STEP = 0.5;
+
+// Items that can be turned (their `rot` is the direction they face).
+const ROTATABLE = new Set(["net", "barrier", "dangler"]);
 
 function num(v) {
   return String(Math.round(v * 100) / 100);
@@ -178,6 +186,12 @@ function svgText(x, y, size, weight, text, cls) {
 
 function pathD(pts) {
   return pts.map(([x, y], i) => `${i ? "L" : "M"} ${num(x)} ${num(y)}`).join(" ");
+}
+
+function segmentsD(segs) {
+  return segs
+    .map(([a, b]) => `M ${num(a[0])} ${num(a[1])} L ${num(b[0])} ${num(b[1])}`)
+    .join(" ");
 }
 
 function resample(pts, step) {
@@ -206,7 +220,7 @@ function resample(pts, step) {
   return out;
 }
 
-// Points along a Catmull-Rom curve through `pts`, about every 0.5 ft.
+// Points along a Catmull-Rom curve through `pts`, every STEP ft.
 function smooth(pts) {
   if (pts.length < 2) {
     return pts.slice();
@@ -228,7 +242,7 @@ function smooth(pts) {
     }
   }
   dense.push(pts[pts.length - 1]);
-  return resample(dense, 0.5);
+  return resample(dense, STEP);
 }
 
 function normal(pts, i) {
@@ -236,6 +250,17 @@ function normal(pts, i) {
   const b = pts[Math.min(i + 1, pts.length - 1)];
   const len = Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]), 1e-6);
   return [-(b[1] - a[1]) / len, (b[0] - a[0]) / len];
+}
+
+// The point and normal at fractional index `s` of a sampled curve.
+function at(pts, s) {
+  const last = pts.length - 1;
+  s = Math.min(Math.max(s, 0), last);
+  const i = Math.min(Math.floor(s), Math.max(last - 1, 0));
+  const t = s - i;
+  const a = pts[i];
+  const b = pts[Math.min(i + 1, last)];
+  return [[a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], normal(pts, t < 0.5 ? i : i + 1)];
 }
 
 function offset(pts, by) {
@@ -253,6 +278,36 @@ function stroke(d, extra = "") {
   );
 }
 
+// Backward skating: 2 ft cups every 3 ft (with a puck dot between them).
+function cups(path, until, dots) {
+  let out = "";
+  for (let start = 0; start + 4 <= until; start += 6) {
+    const unit = [];
+    for (let k = 0; k <= 8; k++) {
+      const u = k / 8;
+      const [p, n] = at(path, start + 4 * u);
+      const o = 0.8 * Math.sin(Math.PI * u);
+      unit.push([p[0] + n[0] * o, p[1] + n[1] * o]);
+    }
+    out += stroke(pathD(unit));
+    if (dots && start + 5 < until) {
+      const [p] = at(path, start + 5);
+      out += `<circle class="d-dot" cx="${num(p[0])}" cy="${num(p[1])}" r="0.35" fill="${INK}"/>`;
+    }
+  }
+  return out;
+}
+
+// The small loop at the start of a goalie slide.
+function curl(path) {
+  const [p, n] = at(path, 0);
+  const r = 0.7;
+  return (
+    `<circle class="d-line" cx="${num(p[0] - n[0] * r)}" cy="${num(p[1] - n[1] * r)}" ` +
+    `r="${num(r)}" fill="none" stroke="${INK}" stroke-width="0.4"/>`
+  );
+}
+
 function drawLine(style, end, raw) {
   if (raw.length < 2) {
     return "";
@@ -260,6 +315,7 @@ function drawLine(style, end, raw) {
   const path = smooth(raw);
   const count = path.length;
   const plainFrom = Math.max(count - 5, 0);
+  const tail = () => (count - plainFrom >= 2 ? stroke(pathD(path.slice(plainFrom))) : "");
   let out = "";
   if (style === "pass") {
     out += stroke(pathD(path), ' stroke-dasharray="1.6 1.2"');
@@ -268,22 +324,58 @@ function drawLine(style, end, raw) {
       out += stroke(pathD(offset(path, () => side).slice(0, Math.max(plainFrom, 2))));
     }
   } else if (style === "carry") {
-    const wave = (i) => (i >= plainFrom ? 0 : 0.8 * Math.sin((i * 0.5 * 2 * Math.PI) / 3));
-    out += stroke(pathD(offset(path, wave)));
+    // A 3 ft wave, sampled finely, easing into the plain end.
+    const wave = [];
+    for (let k = 0; k <= plainFrom * 4; k++) {
+      const s = k / 4;
+      const [[x, y], [nx, ny]] = at(path, s);
+      const fade = Math.min((plainFrom - s) / 2, 1);
+      const o = 0.8 * fade * Math.sin((s * STEP * 2 * Math.PI) / 3);
+      wave.push([x + nx * o, y + ny * o]);
+    }
+    out += stroke(pathD(wave.concat(path.slice(plainFrom + 1))));
+  } else if (style === "backward" || style === "backcarry") {
+    out += cups(path, plainFrom, style === "backcarry") + tail();
   } else if (style === "lateral") {
-    const zigzag = (i) => (i >= plainFrom ? 0 : 0.9 * (1 - 4 * Math.abs((i % 6) / 6 - 0.5)));
-    out += stroke(pathD(offset(path, zigzag)));
-  } else if (style === "backward") {
-    out += stroke(pathD(path));
-    let ticks = "";
-    for (let i = 4; i < plainFrom; i += 6) {
-      const [nx, ny] = normal(path, i);
+    const ticks = [];
+    for (let i = 1; i < plainFrom; i += 2) {
       const [x, y] = path[i];
-      ticks += `M ${num(x - nx)} ${num(y - ny)} L ${num(x + nx)} ${num(y + ny)} `;
+      const [nx, ny] = normal(path, i);
+      ticks.push([
+        [x - nx, y - ny],
+        [x + nx, y + ny],
+      ]);
     }
-    if (ticks) {
-      out += stroke(ticks.trim());
+    if (ticks.length) {
+      out += stroke(segmentsD(ticks));
     }
+    out += tail();
+  } else if (style === "crossover") {
+    const arms = [];
+    for (let s = 2; s + 1 < plainFrom; s += 4) {
+      const [x, y] = path[s];
+      const [nx, ny] = normal(path, s);
+      const tx = ny;
+      const ty = -nx;
+      const a = 0.6;
+      arms.push([
+        [x - (tx + nx) * a, y - (ty + ny) * a],
+        [x + (tx + nx) * a, y + (ty + ny) * a],
+      ]);
+      arms.push([
+        [x - (tx - nx) * a, y - (ty - ny) * a],
+        [x + (tx - nx) * a, y + (ty - ny) * a],
+      ]);
+    }
+    if (arms.length) {
+      out += stroke(segmentsD(arms));
+    }
+    out += tail();
+  } else if (style === "padslide" || style === "butterfly") {
+    const bump = style === "padslide";
+    out += curl(path);
+    const shape = (i) => (bump && i >= 2 && i <= 8 ? 0.9 * Math.sin((Math.PI * (i - 2)) / 6) : 0);
+    out += stroke(pathD(offset(path, shape)));
   } else {
     out += stroke(pathD(path));
   }
@@ -296,10 +388,15 @@ function drawLine(style, end, raw) {
   const ux = (tip[0] - back[0]) / len;
   const uy = (tip[1] - back[1]) / len;
   if (end === "stop") {
-    const d =
-      `M ${num(tip[0] - uy * 1.4)} ${num(tip[1] + ux * 1.4)} ` +
-      `L ${num(tip[0] + uy * 1.4)} ${num(tip[1] - ux * 1.4)}`;
-    out += `<path class="d-line" d="${d}" fill="none" stroke="${INK}" stroke-width="0.7"/>`;
+    const bars = [0, 0.9].map((b) => {
+      const x = tip[0] - ux * b;
+      const y = tip[1] - uy * b;
+      return [
+        [x - uy * 1.4, y + ux * 1.4],
+        [x + uy * 1.4, y - ux * 1.4],
+      ];
+    });
+    out += `<path class="d-line" d="${segmentsD(bars)}" fill="none" stroke="${INK}" stroke-width="0.5"/>`;
   } else if (end !== "none") {
     const bx = tip[0] - ux * 2.2;
     const by = tip[1] - uy * 2.2;
@@ -311,19 +408,104 @@ function drawLine(style, end, raw) {
   return out;
 }
 
-function drawNet(x, y, deg) {
+// Local coordinates for a turned item: u along `deg`, v across.
+function local(x, y, deg) {
   const r = (deg * Math.PI) / 180;
   const s = Math.sin(r);
   const c = Math.cos(r);
-  const p = (u, v) => [x + u * c - v * s, y + u * s + v * c];
-  const pts = [p(0, -3), p(-2.6, -2.6), p(-3.3, 0), p(-2.6, 2.6), p(0, 3)];
-  const [a, b] = [p(0, -3), p(0, 3)];
+  return (u, v) => [x + u * c - v * s, y + u * s + v * c];
+}
+
+const NET_DEPTH = 3.4;
+const NET_HALF = 3.3;
+const NET_FLARE = 0.5;
+const NET_P = 2.6;
+
+function netBack(v) {
+  const t = Math.min(Math.abs(v) / NET_HALF, 1);
+  return -NET_FLARE - (NET_DEPTH - NET_FLARE) * Math.max(1 - t ** NET_P, 0) ** (1 / NET_P);
+}
+
+function netSide(u) {
+  const g = Math.min(Math.max((-u - NET_FLARE) / (NET_DEPTH - NET_FLARE), 0), 1);
+  return NET_HALF * Math.max(1 - g ** NET_P, 0) ** (1 / NET_P);
+}
+
+function drawNet(x, y, deg) {
+  const p = local(x, y, deg);
+  const outline = [p(0, -3)];
+  for (let k = 0; k <= 20; k++) {
+    const v = -NET_HALF + (2 * NET_HALF * k) / 20;
+    outline.push(p(netBack(v), v));
+  }
+  outline.push(p(0, 3));
+  const mesh = [];
+  for (const v of [-2.2, -1.1, 0, 1.1, 2.2]) {
+    mesh.push([p(0, v), p(netBack(v), v)]);
+  }
+  for (const u of [-1.2, -2.3]) {
+    const s = netSide(u);
+    mesh.push([p(u, -s), p(u, s)]);
+  }
+  const a = p(0, -3);
+  const b = p(0, 3);
   return (
-    `<path class="d-net" d="${pathD(pts)} Z" fill="${NET}" stroke="${INK}" stroke-width="0.35" ` +
+    `<path class="d-net" d="${pathD(outline)} Z" fill="${NET}" stroke="${RED}" stroke-width="0.3" ` +
     `stroke-linejoin="round"/>` +
+    `<path class="d-mesh" d="${segmentsD(mesh)}" fill="none" stroke="${NET_MESH}" stroke-width="0.12"/>` +
     `<path class="d-red" d="M ${num(a[0])} ${num(a[1])} L ${num(b[0])} ${num(b[1])}" ` +
-    `stroke="${RED}" stroke-width="0.35"/>`
+    `stroke="${RED}" stroke-width="0.6" stroke-linecap="round"/>` +
+    [a, b]
+      .map(
+        (q) =>
+          `<circle class="d-red-fill" cx="${num(q[0])}" cy="${num(q[1])}" r="0.4" fill="${RED}"/>`,
+      )
+      .join("")
   );
+}
+
+function drawBarrier(x, y, deg) {
+  const p = local(x, y, deg);
+  const body = [p(-4, -0.55), p(4, -0.55), p(4, 0.55), p(-4, 0.55)];
+  const stripes = [];
+  for (let k = -3; k <= 3; k++) {
+    const u = k * 1.1;
+    stripes.push([p(u - 0.45, 0.55), p(u + 0.45, -0.55)]);
+  }
+  return (
+    `<path class="d-barrier" d="${pathD(body)} Z" fill="${BARRIER}" stroke="${INK}" ` +
+    `stroke-width="0.2" stroke-linejoin="round"/>` +
+    `<path class="d-stripe" d="${segmentsD(stripes)}" fill="none" stroke="${INK}" stroke-width="0.2"/>`
+  );
+}
+
+function drawDangler(x, y, deg) {
+  const p = local(x, y, deg);
+  const bar = [p(-2, -0.3), p(2, -0.3), p(2, 0.3), p(-2, 0.3)];
+  const feet = [-2, 2].map((u) => [p(u, -1), p(u, 1)]);
+  return (
+    `<path class="d-dangler" d="${pathD(bar)} Z" fill="${DANGLER}" stroke="${INK}" stroke-width="0.15"/>` +
+    `<path class="d-foot" d="${segmentsD(feet)}" fill="none" stroke="${INK}" stroke-width="0.5" ` +
+    `stroke-linecap="round"/>`
+  );
+}
+
+// Coaches and goalies (C, G, C2, …) are circled.
+function circled(label) {
+  return /^[CG][0-9]*$/.test(label);
+}
+
+function drawPlayer(x, y, raw) {
+  const label = (raw || "").trim() || "X";
+  if (circled(label)) {
+    const r = 2.6 + 0.9 * (label.length - 1);
+    return (
+      `<circle class="d-ring" cx="${num(x)}" cy="${num(y)}" r="${num(r)}" fill="${ICE}" ` +
+      `stroke="${INK}" stroke-width="0.35"/>` +
+      svgText(x, y + 1.45, 4, 700, label, "d-player")
+    );
+  }
+  return svgText(x, y + 1.8, 5, 700, label, "d-player");
 }
 
 function puck(x, y) {
@@ -334,7 +516,7 @@ function drawItem(item) {
   const { x, y } = item;
   switch (item.t) {
     case "player":
-      return svgText(x, y + 1.8, 5, 700, (item.label || "").trim() || "X", "d-player");
+      return drawPlayer(x, y, item.label);
     case "cone": {
       const d =
         `M ${num(x)} ${num(y - 1.6)} L ${num(x + 1.4)} ${num(y + 1.1)} ` +
@@ -359,6 +541,10 @@ function drawItem(item) {
       );
     case "net":
       return drawNet(x, y, item.rot || 0);
+    case "barrier":
+      return drawBarrier(x, y, item.rot || 0);
+    case "dangler":
+      return drawDangler(x, y, item.rot || 0);
     case "text":
       return svgText(x, y + 1, 3.2, 600, item.text || "", "d-text");
     case "line":
@@ -368,13 +554,35 @@ function drawItem(item) {
   }
 }
 
+// Drawing order: nets, barriers and danglers; then lines; then the rest.
+function layerOf(item) {
+  if (ROTATABLE.has(item.t)) {
+    return 0;
+  }
+  return item.t === "line" ? 1 : 2;
+}
+
 // Something easy to grab under each item.
 function hitArea(item) {
   if (item.t === "line") {
     return `<path class="hit" d="${pathD(smooth(item.pts))}"/>`;
   }
-  return `<circle class="hit-area" cx="${num(item.x)}" cy="${num(item.y)}" r="3"/>`;
+  const r = item.t === "barrier" ? 4 : 3;
+  return `<circle class="hit-area" cx="${num(item.x)}" cy="${num(item.y)}" r="${r}"/>`;
 }
+
+// Where a turned item's rotation handle sits.
+function handleAt(item) {
+  const reach = item.t === "barrier" ? 6 : 5.2;
+  const r = ((item.rot || 0) * Math.PI) / 180;
+  return [item.x + Math.cos(r) * reach, item.y + Math.sin(r) * reach];
+}
+
+// Goal-line spots a new net snaps to: [x, y, facing].
+const GOALS = [
+  [11, 42.5, 0],
+  [189, 42.5, 180],
+];
 
 // Fewer points for a freehand stroke (Ramer–Douglas–Peucker).
 function simplify(pts, epsilon) {
@@ -418,7 +626,8 @@ function setUpEditor(root) {
   root.dataset.ready = "1";
   const form = root.closest("form");
   const json = form.querySelector("[data-diagram-json]");
-  const sizeSelect = form.querySelector("[data-editor-size-select]");
+  const areaSelect = form.querySelector("[data-editor-area]");
+  const lanesSelect = form.querySelector("[data-editor-lanes]");
   const endSelect = root.querySelector("[data-line-end]");
   const canvas = root.querySelector(".editor-canvas");
   const svg = root.querySelector("[data-editor-svg]");
@@ -436,6 +645,8 @@ function setUpEditor(root) {
   let tool = { kind: "select" };
   let selected = -1;
   let drag = null;
+  // Turning an item with its handle: { item }.
+  let spin = null;
   let draft = null;
   const history = [];
 
@@ -455,18 +666,35 @@ function setUpEditor(root) {
   };
 
   // The drawable area: the frame without the padding around the boards.
+  // The drill's size key ("half", "half-3"); areas without lanes use the whole width.
+  const sizeKey = () => {
+    const lanes = Number(lanesSelect.value) || 1;
+    const key = lanes > 1 ? `${areaSelect.value}-${lanes}` : areaSelect.value;
+    return frames[key] ? key : areaSelect.value;
+  };
+  const syncLanes = () => {
+    const single = !frames[`${areaSelect.value}-2`];
+    lanesSelect.disabled = single;
+    if (single) {
+      lanesSelect.value = "1";
+    }
+  };
   const frame = () => {
-    const [x, y, w, h] = frames[sizeSelect.value];
+    const [x, y, w, h] = frames[sizeKey()];
     return { x: x + 1.5, y: y + 1.5, w: w - 3, h: h - 3 };
   };
-  const setView = () => svg.setAttribute("viewBox", frames[sizeSelect.value].join(" "));
+  const setView = () => svg.setAttribute("viewBox", frames[sizeKey()].join(" "));
   const keep = (v, lo, hi) => Math.round(Math.min(Math.max(v, lo), hi) * 10) / 10;
 
-  function point(event) {
+  function rawPoint(event) {
     const pt = svg.createSVGPoint();
     pt.x = event.clientX;
     pt.y = event.clientY;
-    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+
+  function point(event) {
+    const p = rawPoint(event);
     const f = frame();
     return [keep(p.x, f.x, f.x + f.w), keep(p.y, f.y, f.y + f.h)];
   }
@@ -485,7 +713,7 @@ function setUpEditor(root) {
   function render() {
     const order = state.items
       .map((item, i) => [item, i])
-      .sort((a, b) => (a[0].t === "line" ? 0 : 1) - (b[0].t === "line" ? 0 : 1));
+      .sort((a, b) => layerOf(a[0]) - layerOf(b[0]));
     layer.innerHTML = order
       .map(([item, i]) => `<g data-i="${i}">${drawItem(item)}${hitArea(item)}</g>`)
       .join("");
@@ -507,7 +735,28 @@ function setUpEditor(root) {
         box.setAttribute("width", b.width + 2);
         box.setAttribute("height", b.height + 2);
         overlay.append(box);
+        const item = state.items[selected];
+        if (item && ROTATABLE.has(item.t)) {
+          const [hx, hy] = handleAt(item);
+          const g2 = document.createElementNS(SVG_NS, "g");
+          g2.setAttribute("class", "rot-handle");
+          g2.innerHTML =
+            `<path d="M ${num(item.x)} ${num(item.y)} L ${num(hx)} ${num(hy)}"/>` +
+            `<circle cx="${num(hx)}" cy="${num(hy)}" r="1.3"><title>Drag to turn</title></circle>`;
+          overlay.append(g2);
+        }
       }
+    }
+  }
+
+  // Turn the selected item by `by` degrees, onto a multiple of `by`.
+  function turn(by) {
+    const item = state.items[selected];
+    if (item && ROTATABLE.has(item.t)) {
+      change(() => {
+        const next = Math.round(((item.rot || 0) + by) / by) * by;
+        item.rot = ((next % 360) + 360) % 360;
+      });
     }
   }
 
@@ -569,13 +818,11 @@ function setUpEditor(root) {
         change(() => state.items.splice(i, 1));
       }
     },
-    rotate() {
-      const item = state.items[selected];
-      if (item && item.t === "net") {
-        change(() => {
-          item.rot = ((item.rot || 0) + 45) % 360;
-        });
-      }
+    rotateRight() {
+      turn(15);
+    },
+    rotateLeft() {
+      turn(-15);
     },
     undo() {
       if (history.length) {
@@ -623,6 +870,12 @@ function setUpEditor(root) {
     activeEditor = editor;
     const p = point(event);
     const [x, y] = p;
+    if (tool.kind === "select" && selected >= 0 && event.target.closest(".rot-handle")) {
+      remember();
+      spin = { item: state.items[selected] };
+      capture(event);
+      return;
+    }
     if (tool.kind === "select") {
       const g = event.target.closest("[data-i]");
       selected = g ? Number(g.dataset.i) : -1;
@@ -662,6 +915,15 @@ function setUpEditor(root) {
     } else if (tool.kind === "net") {
       const f = frame();
       item = { t: "net", x, y, rot: x < f.x + f.w / 2 ? 0 : 180 };
+      // Snap onto a goal line when dropped near one.
+      for (const [gx, gy, rot] of GOALS) {
+        const inside = gx >= f.x && gx <= f.x + f.w && gy >= f.y && gy <= f.y + f.h;
+        if (inside && Math.hypot(x - gx, y - gy) < 5) {
+          item = { t: "net", x: gx, y: gy, rot };
+        }
+      }
+    } else if (ROTATABLE.has(tool.kind)) {
+      item = { t: tool.kind, x, y, rot: 0 };
     } else {
       item = { t: tool.kind, x, y };
     }
@@ -669,6 +931,14 @@ function setUpEditor(root) {
   });
 
   svg.addEventListener("pointermove", (event) => {
+    if (spin) {
+      const p = rawPoint(event);
+      const deg = (Math.atan2(p.y - spin.item.y, p.x - spin.item.x) * 180) / Math.PI;
+      const step = event.shiftKey ? 1 : 15;
+      spin.item.rot = (((Math.round(deg / step) * step) % 360) + 360) % 360;
+      render();
+      return;
+    }
     if (drag && selected >= 0) {
       const p = point(event);
       const dx = p[0] - drag.start[0];
@@ -708,6 +978,11 @@ function setUpEditor(root) {
   });
 
   svg.addEventListener("pointerup", () => {
+    if (spin) {
+      spin = null;
+      save();
+      return;
+    }
     if (drag) {
       if (drag.moved) {
         save();
@@ -739,10 +1014,14 @@ function setUpEditor(root) {
     }
   });
 
-  sizeSelect.addEventListener("change", () => {
-    setView();
-    render();
-  });
+  for (const select of [areaSelect, lanesSelect]) {
+    select.addEventListener("change", () => {
+      syncLanes();
+      setView();
+      render();
+    });
+  }
+  syncLanes();
 
   const editor = { root, actions, isDrawing: () => Boolean(draft) };
   activeEditor = editor;
@@ -774,7 +1053,11 @@ document.addEventListener("keydown", (event) => {
   } else if (key === "escape") {
     actions.cancel();
   } else if (key === "r") {
-    actions.rotate();
+    if (event.shiftKey) {
+      actions.rotateLeft();
+    } else {
+      actions.rotateRight();
+    }
   } else if (key === "v") {
     actions.selectTool();
   }
@@ -799,6 +1082,8 @@ document.addEventListener("click", (event) => {
     pucks: count("puck") + 10 * count("pucks"),
     nets: count("net"),
     tires: count("tire"),
+    barriers: count("barrier"),
+    danglers: count("dangler"),
   };
   for (const [key, value] of Object.entries(totals)) {
     const input = form.querySelector(`[data-equipment="${key}"]`);
@@ -808,9 +1093,27 @@ document.addEventListener("click", (event) => {
   }
 });
 
+// Part forms on full ice: the left/right end fields only matter when the ice
+// is split at the red line, so hide them otherwise.
+function syncLayout(select) {
+  const form = select.closest("form");
+  for (const field of form.querySelectorAll("[data-layout-end]")) {
+    field.hidden = select.value !== "ends";
+  }
+}
+
+document.addEventListener("change", (event) => {
+  if (event.target.matches("[data-layout-whole]")) {
+    syncLayout(event.target);
+  }
+});
+
 function setUpEditors(root) {
   for (const editor of root.querySelectorAll("[data-diagram-editor]")) {
     setUpEditor(editor);
+  }
+  for (const select of root.querySelectorAll("[data-layout-whole]")) {
+    syncLayout(select);
   }
 }
 

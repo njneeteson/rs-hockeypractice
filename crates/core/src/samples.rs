@@ -1,8 +1,9 @@
-//! A few example drills to start the library with (one of each ice size).
+//! A few example drills to start the library with (one for each main area,
+//! plus a lane drill and a goalie drill).
 
 use crate::diagram::{Diagram, Item, LineEnd, LineStyle};
 use crate::drill::{Category, DrillFields, Equipment};
-use crate::rink::IceSize;
+use crate::rink::{Area, IceSize};
 
 fn player(x: f32, y: f32, label: &str) -> Item {
     Item::Player {
@@ -10,6 +11,10 @@ fn player(x: f32, y: f32, label: &str) -> Item {
         y,
         label: label.into(),
     }
+}
+
+fn net(x: f32, y: f32, rot: f32) -> Item {
+    Item::Net { x, y, rot }
 }
 
 fn line(style: LineStyle, pts: &[(f32, f32)]) -> Item {
@@ -24,7 +29,7 @@ pub fn drills() -> Vec<DrillFields> {
     vec![
         DrillFields {
             name: "Full-ice flow warm-up".into(),
-            ice: IceSize::Full,
+            ice: IceSize::FULL,
             category: Category::WarmUp,
             minutes: 6,
             description: "Two lines in opposite corners. On the whistle the first player in each line \
@@ -34,6 +39,8 @@ pub fn drills() -> Vec<DrillFields> {
             points: "Long, full strides\nCrossovers through the circles\nHeads up through the middle".into(),
             diagram: Diagram {
                 items: vec![
+                    net(11.0, 42.5, 0.0),
+                    net(189.0, 42.5, 180.0),
                     player(12.0, 72.0, "X"),
                     player(16.0, 75.0, "X"),
                     player(188.0, 13.0, "X"),
@@ -42,11 +49,11 @@ pub fn drills() -> Vec<DrillFields> {
                     line(LineStyle::Skate, &[(180.0, 11.0), (100.0, 11.0), (35.0, 13.0), (18.0, 27.0), (30.0, 37.0), (100.0, 45.0)]),
                 ],
             },
-            equipment: vec![(Equipment::Pucks, 20)],
+            equipment: vec![(Equipment::Pucks, 20), (Equipment::Nets, 2)],
         },
         DrillFields {
             name: "Pass, skate and shoot".into(),
-            ice: IceSize::Half,
+            ice: IceSize::HALF,
             category: Category::Shooting,
             minutes: 10,
             description: "Shooters line up at the red line with pucks; a passer stands at the far \
@@ -57,6 +64,7 @@ pub fn drills() -> Vec<DrillFields> {
                 .into(),
             diagram: Diagram {
                 items: vec![
+                    net(11.0, 42.5, 0.0),
                     player(90.0, 14.0, "X"),
                     player(94.0, 11.0, "X"),
                     Item::Pucks { x: 96.0, y: 18.0 },
@@ -67,11 +75,11 @@ pub fn drills() -> Vec<DrillFields> {
                     line(LineStyle::Shot, &[(28.0, 39.0), (13.0, 42.0)]),
                 ],
             },
-            equipment: vec![(Equipment::Pucks, 25)],
+            equipment: vec![(Equipment::Pucks, 25), (Equipment::Nets, 1)],
         },
         DrillFields {
             name: "1-on-1 corner battles".into(),
-            ice: IceSize::Quarter,
+            ice: IceSize::QUARTER,
             category: Category::Battles,
             minutes: 8,
             description: "Forwards and defence start on the boards at the hash marks. The coach \
@@ -82,6 +90,7 @@ pub fn drills() -> Vec<DrillFields> {
                 .into(),
             diagram: Diagram {
                 items: vec![
+                    net(12.0, 36.0, 0.0),
                     player(55.0, 6.0, "X"),
                     player(48.0, 6.0, "O"),
                     player(70.0, 30.0, "C"),
@@ -91,11 +100,11 @@ pub fn drills() -> Vec<DrillFields> {
                     line(LineStyle::Backward, &[(46.0, 9.0), (30.0, 22.0), (20.0, 32.0)]),
                 ],
             },
-            equipment: vec![(Equipment::Pucks, 15)],
+            equipment: vec![(Equipment::Pucks, 15), (Equipment::Nets, 1)],
         },
         DrillFields {
             name: "Neutral-zone puck control weave".into(),
-            ice: IceSize::Neutral,
+            ice: IceSize::NEUTRAL,
             category: Category::PuckHandling,
             minutes: 8,
             description: "Set two rows of cones between the blue lines. Players carry a puck \
@@ -122,7 +131,7 @@ pub fn drills() -> Vec<DrillFields> {
         },
         DrillFields {
             name: "3-on-2 end-zone small-area game".into(),
-            ice: IceSize::EndZone,
+            ice: IceSize::END_ZONE,
             category: Category::SmallArea,
             minutes: 10,
             description: "Put a second net facing the goal at the blue line. Three attackers play \
@@ -133,6 +142,7 @@ pub fn drills() -> Vec<DrillFields> {
                 .into(),
             diagram: Diagram {
                 items: vec![
+                    net(11.0, 42.5, 0.0),
                     Item::Net { x: 68.0, y: 42.5, rot: 180.0 },
                     player(45.0, 20.0, "X"),
                     player(45.0, 65.0, "X"),
@@ -146,7 +156,63 @@ pub fn drills() -> Vec<DrillFields> {
                     Item::Text { x: 58.0, y: 56.0, text: "40 s shifts".into() },
                 ],
             },
-            equipment: vec![(Equipment::Pucks, 15), (Equipment::Nets, 1), (Equipment::Pinnies, 5)],
+            equipment: vec![(Equipment::Pucks, 15), (Equipment::Nets, 2), (Equipment::Pinnies, 5)],
+        },
+        DrillFields {
+            name: "Dangler and pivot lane".into(),
+            ice: IceSize::lane(Area::Half, 3),
+            category: Category::PuckHandling,
+            minutes: 8,
+            description: "Each lane runs from the red line to the goal line. Players carry the \
+                puck to the dangler, pull it under the bar and around it, then pivot at the \
+                cones and skate backward to the stop line. Next player goes when the first \
+                reaches the cones."
+                .into(),
+            points: "Pull the puck wide, keep it under the bar\nPivot on the balls of the feet\nBackward: knees bent, C-cuts"
+                .into(),
+            diagram: Diagram {
+                items: vec![
+                    player(94.0, 14.0, "X"),
+                    player(97.0, 9.0, "X"),
+                    Item::Pucks { x: 97.0, y: 20.0 },
+                    Item::Dangler { x: 64.0, y: 14.0, rot: 90.0 },
+                    Item::Cone { x: 42.0, y: 7.0 },
+                    Item::Cone { x: 42.0, y: 21.0 },
+                    Item::Barrier { x: 10.0, y: 14.0, rot: 90.0 },
+                    line(LineStyle::Carry, &[(90.0, 14.0), (70.0, 14.0)]),
+                    line(LineStyle::Carry, &[(60.0, 12.0), (52.0, 14.0), (44.0, 14.0)]),
+                    Item::Line {
+                        style: LineStyle::Backward,
+                        end: LineEnd::Stop,
+                        pts: vec![[40.0, 14.0], [16.0, 14.0]],
+                    },
+                ],
+            },
+            equipment: vec![(Equipment::Pucks, 15), (Equipment::Cones, 2), (Equipment::Barriers, 1), (Equipment::Danglers, 1)],
+        },
+        DrillFields {
+            name: "Goalie post-to-post slides".into(),
+            ice: IceSize::END_ZONE,
+            category: Category::Goalies,
+            minutes: 6,
+            description: "The goalie starts on the near post. On the coach's signal they pad-slide \
+                to the far post, recover, then butterfly-slide back to face a shot from the \
+                slot."
+                .into(),
+            points: "Push with the back leg, lead with the shoulder\nStop square to the shooter\nStick on the ice through the slide"
+                .into(),
+            diagram: Diagram {
+                items: vec![
+                    net(11.0, 42.5, 0.0),
+                    player(15.0, 37.0, "G"),
+                    player(42.0, 42.5, "C"),
+                    Item::Pucks { x: 46.0, y: 46.0 },
+                    line(LineStyle::PadSlide, &[(18.0, 36.0), (18.5, 49.0)]),
+                    line(LineStyle::Butterfly, &[(22.5, 49.0), (22.0, 36.0)]),
+                    line(LineStyle::Shot, &[(39.0, 42.5), (26.0, 42.5)]),
+                ],
+            },
+            equipment: vec![(Equipment::Pucks, 10), (Equipment::Nets, 1)],
         },
     ]
 }
@@ -167,8 +233,9 @@ mod tests {
                 }
             }
         }
-        for size in IceSize::ALL {
-            assert!(drills.iter().any(|d| d.ice == *size), "{size:?}");
+        for area in [Area::Full, Area::Half, Area::EndZone, Area::Neutral] {
+            assert!(drills.iter().any(|d| d.ice.area == area), "{area:?}");
         }
+        assert!(drills.iter().any(|d| d.ice.lanes > 1));
     }
 }

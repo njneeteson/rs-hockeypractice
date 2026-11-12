@@ -8,7 +8,7 @@ use crate::form;
 use crate::routes::drills::empty_library_note;
 use crate::state::Shared;
 use crate::views::components::{
-    Num, Text, badge, card, empty, heading, link_button, notice, stat_tile, svg, thead,
+    Num, Text, badge, card, empty, heading, legend_list, link_button, notice, stat_tile, svg, thead,
 };
 use crate::views::forms::{action_button, field};
 use crate::views::{Nav, Page, page};
@@ -22,7 +22,7 @@ use localapp_core::board;
 use localapp_core::db::{DrillFilter, PracticeSummary};
 use localapp_core::drill::{Drill, equipment_summary};
 use localapp_core::practice::{Plan, PracticeFields, Segment};
-use localapp_core::rink::{IceSize, Layout, PracticeIce};
+use localapp_core::rink::{End, IceSize, Layout, MAX_LANES, PracticeIce};
 use maud::{Markup, html};
 use serde::Deserialize;
 
@@ -392,11 +392,42 @@ async fn pdf(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
 
 // ---- The builder ----------------------------------------------------------------------------
 
-fn layout_select(name: &str, ice: PracticeIce, selected: Layout) -> Markup {
+/// The ice-layout fields of a part's form. Full ice: one area or lanes, or split
+/// at the red line with each end split its own way. Half ice: how the end is split.
+/// With JavaScript, `planner.js` hides the end fields unless the ice is split.
+fn layout_fields(ice: PracticeIce, selected: Layout) -> Markup {
+    let (whole, left, right) = match selected {
+        Layout::Full(n) => (n.to_string(), End::WHOLE, End::WHOLE),
+        Layout::Ends(l, r) => ("ends".to_string(), l, r),
+        Layout::Half(e) => (String::new(), e, End::WHOLE),
+    };
+    let end_select = |name: &str, sel: End| {
+        html! {
+            select name=(name) {
+                @for e in End::all() {
+                    option value=(e.key()) selected[e == sel] { (e.label()) }
+                }
+            }
+        }
+    };
+    let ends_hint = "Lanes run along the ice. With the neutral zone split off, the lanes cover \
+        the end zone and the neutral zone is one more station.";
     html! {
-        select name=(name) {
-            @for l in Layout::for_ice(ice) {
-                option value=(l.key()) selected[l == selected] { (l.label()) }
+        @match ice {
+            PracticeIce::Half => {
+                (field("Ice layout", ends_hint, end_select("left", left)))
+            }
+            PracticeIce::Full => {
+                (field("Ice layout", "Drills that don't fit a new layout are removed.", html! {
+                    select name="whole" data-layout-whole {
+                        option value="ends" selected[whole == "ends"] { "Split at the red line" }
+                        @for n in 1..=MAX_LANES {
+                            option value=(n) selected[whole == n.to_string()] { (Layout::Full(n).label()) }
+                        }
+                    }
+                }))
+                div data-layout-end { (field("Left end", ends_hint, end_select("left", left))) }
+                div data-layout-end { (field("Right end", "Used when the ice is split at the red line.", end_select("right", right))) }
             }
         }
     }
@@ -481,8 +512,7 @@ fn segment_settings(cx: &Ctx, plan: &Plan, seg: &Segment) -> Markup {
                 (field("Minutes", "Length of this part; printed in the header.", html! {
                     input type="number" name="minutes" value=(seg.minutes) min="1" max="180" required;
                 }))
-                (field("Ice layout", "How the ice is split into stations. Drills that don't fit a new layout are removed.",
-                    layout_select("layout", plan.practice.ice, seg.layout)))
+                (layout_fields(plan.practice.ice, seg.layout))
                 (field("Rotate every (min)", "Minutes per station before groups move on. Leave empty for no rotation.", html! {
                     input type="number" name="rotation" value=[seg.rotation] min="1" max="60";
                 }))
@@ -526,8 +556,17 @@ fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
                 }
             }
             div class="segment-body" {
-                div class="board-wrap" data-assign-url=(cx.url(&format!("{base}/stations/"))) {
-                    (svg(board::segment_svg(plan, seg, true)))
+                @let legend = board::segment_legend(plan, seg);
+                div class="board-row" {
+                    div class="board-wrap" data-assign-url=(cx.url(&format!("{base}/stations/"))) {
+                        (svg(board::segment_svg(plan, seg, true)))
+                    }
+                    @if !legend.is_empty() {
+                        aside class="board-legend" aria-label="Legend" {
+                            h3 { "Legend" }
+                            (legend_list(&legend))
+                        }
+                    }
                 }
                 div class="strip" {
                     span { strong { "Ice: " } (seg.layout.label()) }
@@ -546,14 +585,7 @@ fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
 }
 
 fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce) -> Markup {
-    let usable: Vec<&Drill> = library
-        .iter()
-        .filter(|d| {
-            Layout::for_ice(ice)
-                .iter()
-                .any(|l| l.slots().iter().any(|s| s.size == d.ice))
-        })
-        .collect();
+    let usable: Vec<&Drill> = library.iter().filter(|d| d.ice.fits(ice)).collect();
     html! {
         aside class="library card" data-library aria-label="Drill library" {
             h2 { "Drills" }
@@ -564,8 +596,8 @@ fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce) -> Markup {
                 input type="search" data-library-search placeholder="Filter drills" aria-label="Filter drills";
                 select data-library-size aria-label="Ice size" {
                     option value="" { "All sizes" }
-                    @for s in IceSize::ALL {
-                        @if usable.iter().any(|d| d.ice == *s) {
+                    @for s in IceSize::all() {
+                        @if usable.iter().any(|d| d.ice == s) {
                             option value=(s.key()) { (s.label()) }
                         }
                     }
@@ -598,7 +630,7 @@ fn add_segment_form(cx: &Ctx, plan: &Plan) -> Markup {
         form method="post" action=(cx.url(&format!("/practices/{}/segments", plan.practice.id))) class="form-grid" {
             (field("Title", "", html! { input type="text" name="title" value=(suggestion) maxlength="80" placeholder="e.g. Skill stations"; }))
             (field("Minutes", "", html! { input type="number" name="minutes" value="10" min="1" max="180" required; }))
-            (field("Ice layout", "", layout_select("layout", plan.practice.ice, Layout::default_for(plan.practice.ice))))
+            (layout_fields(plan.practice.ice, Layout::default_for(plan.practice.ice)))
             div { button type="submit" class="primary" { "Add part" } }
         }
     }

@@ -16,7 +16,7 @@ fn row(r: &Row<'_>) -> rusqlite::Result<Segment> {
         position: r.get(2)?,
         title: r.get(3)?,
         minutes: r.get(4)?,
-        layout: Layout::from_key(&layout).unwrap_or(Layout::Full),
+        layout: Layout::from_key(&layout).unwrap_or(Layout::Full(1)),
         rotation: r.get(6)?,
         notes: r.get(7)?,
         stations: Vec::new(),
@@ -230,7 +230,11 @@ mod tests {
     use super::*;
     use crate::db::drills::tests::sample;
     use crate::db::practices::tests::practice;
-    use crate::rink::{IceSize, PracticeIce};
+    use crate::rink::{End, IceSize, PracticeIce};
+    const QUARTERS: End = End {
+        zone: false,
+        lanes: 2,
+    };
     use chrono::NaiveDate;
 
     fn fields(title: &str, layout: Layout) -> SegmentFields {
@@ -247,18 +251,23 @@ mod tests {
     fn add_move_copy_delete() {
         let db = Database::in_memory().unwrap();
         let p = practice(&db, PracticeIce::Full);
-        let a = db.add_segment(p, fields("Warm-up", Layout::Full)).unwrap();
-        let b = db
-            .add_segment(p, fields("Stations", Layout::Quarters))
+        let a = db
+            .add_segment(p, fields("Warm-up", Layout::Full(1)))
             .unwrap();
-        assert!(db.add_segment(p, fields("Bad", Layout::HalfSplit)).is_err());
+        let b = db
+            .add_segment(p, fields("Stations", Layout::Ends(QUARTERS, QUARTERS)))
+            .unwrap();
+        assert!(
+            db.add_segment(p, fields("Bad", Layout::Half(QUARTERS)))
+                .is_err()
+        );
 
         db.move_segment(b, true).unwrap();
         let order: Vec<i64> = db.segments(p).unwrap().iter().map(|s| s.id).collect();
         assert_eq!(order, vec![b, a]);
 
         let q = db
-            .create_drill(sample("Quarter drill", IceSize::Quarter))
+            .create_drill(sample("Quarter drill", IceSize::QUARTER))
             .unwrap();
         db.set_station(b, 3, q, "Coach Sam").unwrap();
         let c = db.duplicate_segment(b).unwrap();
@@ -269,7 +278,7 @@ mod tests {
 
         // Changing the layout drops drills that no longer fit.
         assert_eq!(
-            db.update_segment(c, fields("Halves", Layout::Halves))
+            db.update_segment(c, fields("Halves", Layout::Ends(End::WHOLE, End::WHOLE)))
                 .unwrap(),
             1
         );
@@ -300,7 +309,7 @@ mod tests {
             db.segments(copy)
                 .unwrap()
                 .iter()
-                .all(|s| s.layout == Layout::Half)
+                .all(|s| s.layout == Layout::Half(End::WHOLE))
         );
         f.ice = PracticeIce::Half;
         assert_eq!(db.update_practice(copy, f).unwrap(), 0);

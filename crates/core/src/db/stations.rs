@@ -31,9 +31,8 @@ impl Database {
         let seg = self
             .segment(segment_id)?
             .ok_or_else(|| anyhow::anyhow!("That page doesn't exist."))?;
-        let s = seg
-            .layout
-            .slots()
+        let slots = seg.layout.slots();
+        let s = slots
             .get(slot)
             .ok_or_else(|| anyhow::anyhow!("That station doesn't exist on this page."))?;
         let d = self
@@ -92,7 +91,11 @@ mod tests {
     use crate::db::drills::tests::sample;
     use crate::db::practices::tests::practice;
     use crate::practice::SegmentFields;
-    use crate::rink::{IceSize, Layout, PracticeIce};
+    use crate::rink::{End, IceSize, Layout, PracticeIce};
+    const QUARTERS: End = End {
+        zone: false,
+        lanes: 2,
+    };
 
     #[test]
     fn sizes_must_match() {
@@ -104,15 +107,15 @@ mod tests {
                 SegmentFields {
                     title: String::new(),
                     minutes: 10,
-                    layout: Layout::HalfSplit,
+                    layout: Layout::Half(QUARTERS),
                     rotation: None,
                     notes: String::new(),
                 },
             )
             .unwrap();
-        let half = db.create_drill(sample("Half", IceSize::Half)).unwrap();
+        let half = db.create_drill(sample("Half", IceSize::HALF)).unwrap();
         let quarter = db
-            .create_drill(sample("Quarter", IceSize::Quarter))
+            .create_drill(sample("Quarter", IceSize::QUARTER))
             .unwrap();
         assert!(db.set_station(seg, 0, half, "").is_err());
         assert!(db.set_station(seg, 5, quarter, "").is_err());
@@ -125,7 +128,7 @@ mod tests {
             "drills in use can't be deleted"
         );
         assert!(
-            db.update_drill(quarter, sample("Quarter", IceSize::Half))
+            db.update_drill(quarter, sample("Quarter", IceSize::HALF))
                 .is_err()
         );
 

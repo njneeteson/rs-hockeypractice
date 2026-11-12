@@ -5,7 +5,7 @@
 //! │ date / time        segment title    length   │  header
 //! │                                     page n/m │
 //! ├──────────────────────────────────────────────┤
-//! │              rink diagram (top half)         │
+//! │        rink diagram (top half)     │ legend  │
 //! │ ▒ stations · rotation · equipment · notes ▒  │  strip
 //! │ ① drill name            ② drill name         │
 //! │   how to run it           how to run it      │  drill text, two columns
@@ -21,6 +21,7 @@
 //! pages with the same header.
 
 use crate::board;
+use crate::diagram::{LEGEND_H, LEGEND_W, LegendEntry};
 use crate::drill::equipment_summary;
 use crate::practice::{Plan, Segment};
 use crate::svg::{FONT, colour as c, n, text};
@@ -37,6 +38,9 @@ const CONTENT_W: f32 = W - 2.0 * MARGIN;
 const HEADER_BOTTOM: f32 = 84.0;
 const DIAGRAM_TOP: f32 = 92.0;
 const DIAGRAM_MAX_H: f32 = 250.0;
+/// Width of the legend column beside the diagram, and the gap before it.
+const LEGEND_COL: f32 = 128.0;
+const LEGEND_GAP: f32 = 10.0;
 const FOOTER_TOP: f32 = H - MARGIN - 20.0;
 const COL_GAP: f32 = 18.0;
 const COL_W: f32 = (CONTENT_W - COL_GAP) / 2.0;
@@ -449,6 +453,85 @@ fn draw_strip(out: &mut String, rows: &[Vec<(String, String)>], top: f32) -> f32
     h
 }
 
+// ---- The legend beside the diagram -------------------------------------------------
+
+/// Draw the legend with its top-left corner at (x, y); returns its height. It
+/// stops at [`DIAGRAM_MAX_H`] with a note of how many entries didn't fit.
+fn draw_legend(out: &mut String, entries: &[LegendEntry], x: f32, y: f32) -> f32 {
+    let w = LEGEND_COL - LEGEND_GAP;
+    let icon_scale = 2.0;
+    let icon_w = LEGEND_W * icon_scale;
+    let label_w = w - icon_w - 12.0;
+    let size = 7.5;
+    text(
+        out,
+        "",
+        x + 6.0,
+        y + 9.0,
+        8.5,
+        700,
+        c::INK,
+        "start",
+        "Legend",
+    );
+    let mut cy = y + 15.0;
+    for (i, e) in entries.iter().enumerate() {
+        let lines = wrap(&e.label, size, false, label_w);
+        let h = (lines.len() as f32 * size * 1.25).max(LEGEND_H * icon_scale) + 3.0;
+        if cy + h > y + DIAGRAM_MAX_H - 12.0 && i + 1 < entries.len() {
+            let more = format!("+ {} more", entries.len() - i);
+            text(
+                out,
+                "",
+                x + 6.0,
+                cy + 9.0,
+                size,
+                400,
+                c::MUTED,
+                "start",
+                &more,
+            );
+            cy += 12.0;
+            break;
+        }
+        let _ = write!(
+            out,
+            r#"<g transform="translate({} {}) scale({icon_scale})">{}</g>"#,
+            n(x + 6.0),
+            n(cy),
+            e.icon
+        );
+        let text_h = lines.len() as f32 * size * 1.25;
+        let mut ty = cy + (LEGEND_H * icon_scale - text_h) / 2.0 + size;
+        for l in &lines {
+            text(
+                out,
+                "",
+                x + 10.0 + icon_w,
+                ty,
+                size,
+                400,
+                c::INK,
+                "start",
+                l,
+            );
+            ty += size * 1.25;
+        }
+        cy += h;
+    }
+    let h = cy - y + 3.0;
+    let _ = write!(
+        out,
+        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="4" fill="none" stroke="{}" stroke-width="0.6"/>"#,
+        n(x),
+        n(y),
+        n(w),
+        n(h),
+        c::RULE
+    );
+    h
+}
+
 // ---- Pages -----------------------------------------------------------------------
 
 struct PageParts {
@@ -598,11 +681,22 @@ fn segment_pages(plan: &Plan, seg_index: usize) -> Vec<PageParts> {
     let seg = &plan.segments[seg_index];
     let mut first = String::new();
 
-    // Diagram, scaled to the content width and centred.
+    // Diagram, scaled to fit beside the legend and centred in its space.
+    let legend = board::segment_legend(plan, seg);
+    let room = if legend.is_empty() {
+        CONTENT_W
+    } else {
+        CONTENT_W - LEGEND_COL
+    };
     let view = board::view(plan.practice.ice.frame());
-    let scale = (CONTENT_W / view.w).min(DIAGRAM_MAX_H / view.h);
+    let scale = (room / view.w).min(DIAGRAM_MAX_H / view.h);
     let (dw, dh) = (view.w * scale, view.h * scale);
-    let dx = MARGIN + (CONTENT_W - dw) / 2.0;
+    let dx = MARGIN + (room - dw) / 2.0;
+    let legend_h = if legend.is_empty() {
+        0.0
+    } else {
+        draw_legend(&mut first, &legend, MARGIN + room + LEGEND_GAP, DIAGRAM_TOP)
+    };
     let _ = write!(
         first,
         r#"<g transform="translate({} {}) scale({}) translate({} {})">{}</g>"#,
@@ -614,7 +708,7 @@ fn segment_pages(plan: &Plan, seg_index: usize) -> Vec<PageParts> {
         board::segment_inner(plan, seg, false)
     );
 
-    let strip_top = DIAGRAM_TOP + dh + 8.0;
+    let strip_top = DIAGRAM_TOP + dh.max(legend_h) + 8.0;
     let strip_h = draw_strip(&mut first, &strip_lines(plan, seg), strip_top);
     let text_top = strip_top + strip_h + 12.0;
     let bottom = FOOTER_TOP - 8.0;
@@ -744,7 +838,11 @@ mod tests {
     use crate::db::drills::tests::sample;
     use crate::db::practices::tests::practice;
     use crate::practice::SegmentFields;
-    use crate::rink::{IceSize, Layout, PracticeIce};
+    use crate::rink::{End, IceSize, Layout, PracticeIce};
+    const QUARTERS: End = End {
+        zone: false,
+        lanes: 2,
+    };
 
     #[test]
     fn wrapping_respects_width() {
@@ -769,14 +867,14 @@ mod tests {
                 SegmentFields {
                     title: "Stations".into(),
                     minutes: 24,
-                    layout: Layout::Quarters,
+                    layout: Layout::Ends(QUARTERS, QUARTERS),
                     rotation: Some(6),
                     notes: "Whistle to rotate. Goalies stay.".into(),
                 },
             )
             .unwrap();
         for slot in 0..4 {
-            let mut f = sample(&format!("Drill {slot}"), IceSize::Quarter);
+            let mut f = sample(&format!("Drill {slot}"), IceSize::QUARTER);
             f.description = paragraph.into();
             let d = db.create_drill(f).unwrap();
             db.set_station(seg, slot, d, "").unwrap();
@@ -786,7 +884,7 @@ mod tests {
             SegmentFields {
                 title: "Scrimmage".into(),
                 minutes: 10,
-                layout: Layout::Full,
+                layout: Layout::Full(1),
                 rotation: None,
                 notes: String::new(),
             },

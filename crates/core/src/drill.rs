@@ -33,6 +33,8 @@ str_enum! {
         Ladder => ("ladder", "Agility ladder"),
         Passers => ("passers", "Passing aids"),
         Bumpers => ("bumpers", "Bumpers or pads"),
+        Barriers => ("barriers", "Barriers"),
+        Danglers => ("danglers", "Danglers"),
     }
 }
 
@@ -158,7 +160,7 @@ mod tests {
     fn fields() -> DrillFields {
         DrillFields {
             name: "  Figure eights ".into(),
-            ice: IceSize::Half,
+            ice: IceSize::HALF,
             category: Category::Skating,
             minutes: 8,
             description: "Line up.\r\nGo.".into(),

@@ -5,7 +5,7 @@ use crate::extract::Ctx;
 use crate::flash;
 use crate::form;
 use crate::state::Shared;
-use crate::views::components::{card, empty, heading, link_button, notice, svg};
+use crate::views::components::{card, empty, heading, legend_list, link_button, notice, svg};
 use crate::views::forms::{Live, LiveTarget, action_button, field, live_form};
 use crate::views::{Nav, Page, page};
 use axum::extract::{Path, Query};
@@ -17,7 +17,7 @@ use localapp_core::board;
 use localapp_core::db::DrillFilter;
 use localapp_core::diagram::{self, Diagram};
 use localapp_core::drill::{Category, Drill, DrillFields, Equipment};
-use localapp_core::rink::{IceSize, PracticeIce};
+use localapp_core::rink::{Area, IceSize, MAX_LANES, PracticeIce};
 use maud::{Markup, html};
 use serde::Deserialize;
 
@@ -54,6 +54,18 @@ fn filter_select<T: localapp_core::enum_macro::KeyEnum + PartialEq>(
             option value="" { (any) }
             @for v in T::all() {
                 option value=(v.key()) selected[selected == Some(*v)] { (v.label()) }
+            }
+        }
+    }
+}
+
+/// A `<select>` over every ice size with an "any" first option.
+fn size_select(name: &str, any: &str, selected: Option<IceSize>) -> Markup {
+    html! {
+        select name=(name) {
+            option value="" { (any) }
+            @for s in IceSize::all() {
+                option value=(s.key()) selected[selected == Some(s)] { (s.label()) }
             }
         }
     }
@@ -97,7 +109,7 @@ async fn list(cx: Ctx, Query(q): Query<ListQuery>) -> AppResult<Page> {
             link_button(&new_url, "New drill", true)))
         (live_form(&cx.url("/drills"), "toolbar", LiveTarget { id: "drill-results", also: &[] }, Live::Filter, html! {
             (field("Search", "", html! { input type="search" name="q" value=(q.q) placeholder="Name or text"; }))
-            (field("Ice", "", filter_select("ice", "Any size", IceSize::from_key(&q.ice))))
+            (field("Ice", "", size_select("ice", "Any size", IceSize::from_key(&q.ice))))
             (field("Category", "", filter_select("category", "Any category", Category::from_key(&q.category))))
             noscript { button type="submit" { "Apply" } }
         }))
@@ -141,12 +153,14 @@ async fn add_samples(cx: Ctx) -> AppResult<Response> {
 
 const DIAGRAM_HELP: &str = "Pick a tool, then click the rink. For lines, drag to draw a curve, or \
     click several points and double-click (or press Enter) to finish. With Select, drag items to \
-    move them; Delete removes the selected item; R rotates a net; double-click text to edit it.";
+    move them; Delete removes the selected item; double-click text to edit it. Nets, barriers \
+    and danglers turn with the round handle, the ⟲ ⟳ buttons, or R / Shift+R (15° steps; hold \
+    Shift while dragging the handle to turn freely). A net dropped near a goal line snaps onto it.";
 
 /// The browser drawing editor (shown only with JavaScript) and its no-JS fallback.
 fn diagram_editor(ice: IceSize, diagram: &Diagram, name: &str) -> Markup {
-    let frames: Vec<String> = IceSize::ALL
-        .iter()
+    let frames: Vec<String> = IceSize::all()
+        .into_iter()
         .map(|s| {
             let v = board::view(s.frame());
             format!(r#""{}":[{},{},{},{}]"#, s.key(), v.x, v.y, v.w, v.h)
@@ -163,11 +177,13 @@ fn diagram_editor(ice: IceSize, diagram: &Diagram, name: &str) -> Markup {
         ("D", "Defence"),
     ];
     let gear = [
+        ("net", "Net", "⊐"),
         ("cone", "Cone", "▲"),
         ("puck", "Puck", "●"),
         ("pucks", "Pile of pucks", "⁘"),
         ("tire", "Tire", "◯"),
-        ("net", "Net", "⊐"),
+        ("barrier", "Barrier", "▬"),
+        ("dangler", "Dangler", "⊢⊣"),
     ];
     html! {
         div class="diagram-editor js-only" data-diagram-editor data-frames=(frames) data-size=(ice.key()) {
@@ -183,24 +199,30 @@ fn diagram_editor(ice: IceSize, diagram: &Diagram, name: &str) -> Markup {
                 }
                 div class="tool-group" aria-label="Equipment" {
                     @for (key, title, icon) in gear {
-                        button type="button" class={ "tool sym gear-" (key) } data-tool=(key) title=(title) { (icon) }
+                        button type="button" class={ "tool gear-tool gear-" (key) } data-tool=(key) title=(title) aria-label=(title) {
+                            @match diagram::equipment_icon(key) {
+                                Some(i) => (svg(i)),
+                                None => (icon),
+                            }
+                        }
                     }
                     button type="button" class="tool" data-tool="text" title="Text label" { "T" }
                 }
                 div class="tool-group" aria-label="Lines" {
-                    @for ((label, legend), style) in diagram::legend().into_iter().zip(diagram::LineStyle::ALL) {
-                        button type="button" class="tool line-tool" data-tool="line" data-style=(style.key()) title=(label) {
-                            (svg(legend))
+                    @for style in diagram::LineStyle::ALL {
+                        button type="button" class="tool line-tool" data-tool="line" data-style=(style.key()) title=(style.label()) {
+                            (svg(diagram::line_sample(style)))
                         }
                     }
                     select data-line-end aria-label="Line end" title="How new lines end" {
                         option value="arrow" { "→ Arrow" }
-                        option value="stop" { "⊣ Stop" }
+                        option value="stop" { "‖ Stop" }
                         option value="none" { "— None" }
                     }
                 }
                 div class="tool-group" {
-                    button type="button" class="tool" data-action="rotate" title="Rotate the selected net (R)" { "⟳" }
+                    button type="button" class="tool" data-action="rotateLeft" title="Turn the selected net, barrier or dangler left (Shift+R)" { "⟲" }
+                    button type="button" class="tool" data-action="rotateRight" title="Turn the selected net, barrier or dangler right (R)" { "⟳" }
                     button type="button" class="tool" data-action="delete" title="Delete the selected item (Del)" { "🗑" }
                     button type="button" class="tool" data-action="undo" title="Undo (Ctrl+Z)" { "↶" }
                     button type="button" class="tool danger" data-action="clear" title="Remove everything" { "Clear" }
@@ -214,10 +236,9 @@ fn diagram_editor(ice: IceSize, diagram: &Diagram, name: &str) -> Markup {
             (field("Diagram data (JSON)", "Drawing needs JavaScript; without it you can edit the diagram's data here.",
                 html! { textarea name="diagram" rows="6" class="mono diagram-json" data-diagram-json { (diagram.to_json()) } }))
         }
-        div class="legend" {
-            @for (label, legend) in diagram::legend() {
-                span class="legend-item" { (svg(legend)) (label) }
-            }
+        details class="legend-key" {
+            summary { "What the symbols mean" }
+            (legend_list(&diagram::legend_all()))
         }
     }
 }
@@ -242,10 +263,19 @@ fn drill_form(cx: &Ctx, action: &str, f: &DrillFields, used: u32) -> Markup {
                             }
                         }
                     }))
-                    (field("Ice needed", "Which part of the ice the drill is drawn on and needs. Practice pages place it in a slot of this size.", html! {
-                        select name="ice" data-editor-size-select {
-                            @for s in IceSize::ALL {
-                                option value=(s.key()) selected[*s == f.ice] title=(s.hint()) { (s.label()) }
+                    (field("Ice needed", "Which part of the ice the drill is drawn on. Practice pages place it in a station of this size.", html! {
+                        select name="area" data-editor-area {
+                            @for a in Area::ALL {
+                                option value=(a.key()) selected[*a == f.ice.area] title=(a.hint()) { (a.label()) }
+                            }
+                        }
+                    }))
+                    (field("Width", "A lane drill uses one of 2–4 lanes running along the area (full ice, half ice or end zone).", html! {
+                        select name="lanes" data-editor-lanes {
+                            @for l in 1..=MAX_LANES {
+                                option value=(l) selected[l == f.ice.lanes] {
+                                    @if l == 1 { "Whole width" } @else { "1 of " (l) " lanes" }
+                                }
                             }
                         }
                     }))
@@ -278,7 +308,7 @@ fn drill_form(cx: &Ctx, action: &str, f: &DrillFields, used: u32) -> Markup {
                     }
                 }
                 p class="js-only" {
-                    button type="button" data-count-equipment { "Count cones, pucks, nets and tires from the diagram" }
+                    button type="button" data-count-equipment { "Count equipment from the diagram" }
                 }
             }))
             div class="form-actions" {
@@ -309,12 +339,26 @@ fn blank(ice: IceSize) -> DrillFields {
 }
 
 async fn new_page(cx: Ctx, Query(q): Query<NewQuery>) -> AppResult<Page> {
-    let f = blank(IceSize::from_key(&q.ice).unwrap_or(IceSize::Half));
+    let f = blank(IceSize::from_key(&q.ice).unwrap_or(IceSize::HALF));
     let body = html! {
         (heading("New drill", "", link_button(&cx.url("/drills"), "← Drill library", false)))
         (drill_form(&cx, &cx.url("/drills"), &f, 0))
     };
     Ok(page(&cx, Nav::Drills, "New drill", body))
+}
+
+/// The drill's size: a size key (`ice`), or an area and a lane count.
+fn ice_size(key: &str, area: &str, lanes: &str) -> AppResult<IceSize> {
+    if !key.trim().is_empty() {
+        return IceSize::from_key(key)
+            .ok_or_else(|| AppError::bad_request(format!("Unknown ice size “{key}”.")));
+    }
+    let area: Area = form::key(area, "area")?;
+    let lanes: u8 = match lanes.trim() {
+        "" => 1,
+        l => form::number(l, "Lanes")?,
+    };
+    IceSize::new(area, lanes).map_err(|e| AppError::bad_request(e.to_string()))
 }
 
 /// Read the drill form (equipment fields are `eq_<key>`).
@@ -338,7 +382,7 @@ fn parse(pairs: &[(String, String)]) -> AppResult<DrillFields> {
         Diagram::from_json(get("diagram")).map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(DrillFields {
         name: form::text(get("name"), "Name")?,
-        ice: form::key(get("ice"), "ice size")?,
+        ice: ice_size(get("ice"), get("area"), get("lanes"))?,
         category: form::key(get("category"), "category")?,
         minutes: form::number(get("minutes"), "Minutes")?,
         description: get("description").to_string(),

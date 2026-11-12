@@ -160,7 +160,7 @@ pub struct Plan {
 /// One slot of a segment with the drill placed there (if any).
 pub struct PlacedSlot<'a> {
     pub index: usize,
-    pub slot: &'a Slot,
+    pub slot: Slot,
     pub drill: Option<&'a Drill>,
     pub note: &'a str,
 }
@@ -196,7 +196,7 @@ impl Plan {
     pub fn slots<'a>(&'a self, seg: &'a Segment) -> Vec<PlacedSlot<'a>> {
         seg.layout
             .slots()
-            .iter()
+            .into_iter()
             .enumerate()
             .map(|(index, slot)| {
                 let st = seg.station(index);

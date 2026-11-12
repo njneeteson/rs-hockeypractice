@@ -135,7 +135,7 @@ async fn sample_drills_fill_an_empty_library() {
     );
     let r = app.post(&url("/drills/samples"), &[]).await;
     let page = app.get(r.redirect()).await.body;
-    assert!(page.contains("Added 5 example drills."));
+    assert!(page.contains("Added 7 example drills."));
     assert!(page.contains("1-on-1 corner battles"));
 }
 
@@ -199,14 +199,17 @@ async fn practices_are_built_and_printed() {
     assert!(page.body.contains("no parts yet"));
     assert!(!page.body.contains("plan.pdf"), "nothing to print yet");
 
-    // Add a part with a half + two quarters layout.
+    // Add a part split at the red line: a whole half, and a half in two lanes
+    // (two quarters), as the form sends it.
     let r = app
         .post(
             &url(&format!("/practices/{pid}/segments")),
             &[
                 ("title", "Stations"),
                 ("minutes", "16"),
-                ("layout", "half_quarters"),
+                ("whole", "ends"),
+                ("left", "h1"),
+                ("right", "h2"),
             ],
         )
         .await;
@@ -246,7 +249,7 @@ async fn practices_are_built_and_printed() {
         &[
             ("title", "Stations"),
             ("minutes", "16"),
-            ("layout", "half_quarters"),
+            ("layout", "ends-h1-h2"),
             ("rotation", "8"),
             ("notes", "Whistle to rotate"),
         ],
@@ -254,6 +257,11 @@ async fn practices_are_built_and_printed() {
     .await;
     let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
     assert!(page.contains("Rotate every 8 min"));
+    assert!(
+        page.contains("board-legend"),
+        "a legend for the drills on the ice"
+    );
+    assert!(page.contains("Left: whole half · Right: half in 2 lanes"));
     assert!(page.contains("Coach Pat"));
     assert!(page.contains("5:30–5:46 PM"));
     assert!(
@@ -356,9 +364,15 @@ async fn new_pages_render_and_stay_under_the_base_path() {
         .unwrap();
     app.post(
         &url(&format!("/practices/{pid}/segments")),
-        &[("minutes", "10"), ("layout", "half_split")],
+        &[("minutes", "10"), ("left", "z4")],
     )
     .await;
+    let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
+    assert_eq!(
+        page.matches("class=\"drop-slot\"").count(),
+        5,
+        "four end-zone lanes and the neutral zone"
+    );
     for path in [
         "/".to_string(),
         "/practices".into(),
@@ -407,4 +421,52 @@ async fn new_pages_render_and_stay_under_the_base_path() {
             .body
             .contains("Hawks")
     );
+}
+
+#[tokio::test]
+async fn lane_drills_and_rotated_equipment_are_saved() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    let diagram = r#"{"items":[
+        {"t":"net","x":11,"y":20,"rot":30},
+        {"t":"barrier","x":50,"y":10,"rot":90},
+        {"t":"dangler","x":60,"y":10,"rot":45},
+        {"t":"player","x":20,"y":10,"label":"G"},
+        {"t":"line","style":"padslide","end":"stop","pts":[[20,10],[30,12]]}
+    ]}"#;
+    let r = app
+        .post(
+            &url("/drills"),
+            &[
+                ("name", "Lane work"),
+                ("category", "skating"),
+                ("area", "half"),
+                ("lanes", "3"),
+                ("minutes", "8"),
+                ("diagram", diagram),
+            ],
+        )
+        .await;
+    let id = id_from(r.redirect(), "/drills/");
+    let d = app.st.db(move |db| db.drill(id)).await.unwrap().unwrap();
+    assert_eq!(d.ice.key(), "half-3");
+    assert_eq!(d.diagram.items.len(), 5);
+    let page = app.get(&url(&format!("/drills/{id}"))).await.body;
+    for class in ["d-net", "d-barrier", "d-dangler", "d-ring"] {
+        assert!(page.contains(class), "{class}");
+    }
+    // The neutral zone has no lanes.
+    let r = app
+        .post(
+            &url("/drills"),
+            &[
+                ("name", "Bad"),
+                ("category", "skating"),
+                ("area", "neutral"),
+                ("lanes", "2"),
+                ("minutes", "8"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
 }
