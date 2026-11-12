@@ -66,6 +66,9 @@ drills and practices.
   text smaller (down to 5.5 pt); only if it still doesn't fit is it cut short,
   with a note.
 
+For a walkthrough with screenshots, written for coaches using the app, see the
+**[user guide](docs/user-guide.md)**.
+
 ### Ice sizes and layouts
 
 The rink is a North American 200 × 85 ft sheet. A drill needs an **area**, at

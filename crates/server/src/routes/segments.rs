@@ -54,11 +54,12 @@ impl SegmentForm {
         if !self.layout.trim().is_empty() {
             return Layout::from_key(&self.layout).ok_or_else(|| bad("layout", &self.layout));
         }
+        // The end fields only count when the ice is split (the form always
+        // sends them, but hides them otherwise).
         let end = |v: &str| End::from_key(v).ok_or_else(|| bad("ice split", v));
-        let left = end(&self.left)?;
         Ok(match self.whole.trim() {
-            "" => Layout::Half(left),
-            "ends" => Layout::Ends(left, end(&self.right)?),
+            "" => Layout::Half(end(&self.left)?),
+            "ends" => Layout::Ends(end(&self.left)?, end(&self.right)?),
             n => match n.parse::<u8>() {
                 Ok(n) if (1..=MAX_LANES).contains(&n) => Layout::Full(n),
                 _ => return Err(bad("layout", n)),

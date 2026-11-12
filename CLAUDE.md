@@ -64,6 +64,14 @@ overview and layout.
   ones in the README table.
 - **Rust:** edition 2024, 100-column lines, `unsafe` forbidden.
 
+## User guide
+
+`docs/user-guide.md` is the coaches' manual, with screenshots in
+`docs/images/` taken from a demo practice (the seven example drills; parts
+"Warm-up", "Skill stations", "Puck skills"). When a change alters what a
+screen looks like or how something is done, update the guide's text, and
+retake the screenshots it affects at 1280 px wide.
+
 ## Checks before finishing
 
 ```sh

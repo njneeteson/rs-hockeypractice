@@ -495,7 +495,7 @@ fn draw_strip(out: &mut String, rows: &[Vec<(String, String)>], top: f32) -> f32
 /// stops at `max_h` with a note of how many entries didn't fit.
 fn draw_legend(out: &mut String, entries: &[LegendEntry], x: f32, y: f32, max_h: f32) -> f32 {
     let w = LEGEND_COL - LEGEND_GAP;
-    let icon_scale = 2.0;
+    let icon_scale = 1.7;
     let icon_w = LEGEND_W * icon_scale;
     let label_w = w - icon_w - 12.0;
     let size = 7.5;
@@ -513,7 +513,7 @@ fn draw_legend(out: &mut String, entries: &[LegendEntry], x: f32, y: f32, max_h:
     let mut cy = y + 15.0;
     for (i, e) in entries.iter().enumerate() {
         let lines = wrap(&e.label, size, false, label_w);
-        let h = (lines.len() as f32 * size * 1.25).max(LEGEND_H * icon_scale) + 3.0;
+        let h = (lines.len() as f32 * size * 1.25).max(LEGEND_H * icon_scale) + 2.5;
         if cy + h > y + max_h - 12.0 && i + 1 < entries.len() {
             let more = format!("+ {} more", entries.len() - i);
             text(
@@ -655,7 +655,7 @@ fn page_head(plan: &Plan, seg: &Segment, legend: &[LegendEntry], diagram_h: f32)
         0.0
     } else {
         let x = MARGIN + room + LEGEND_GAP;
-        draw_legend(&mut first, legend, x, DIAGRAM_TOP, dh.max(150.0))
+        draw_legend(&mut first, legend, x, DIAGRAM_TOP, dh.max(150.0) + 40.0)
     };
     // Clipped to the practice's ice: on half ice the rest of the rink is cut
     // off, as on the web board (whose viewBox does the same).

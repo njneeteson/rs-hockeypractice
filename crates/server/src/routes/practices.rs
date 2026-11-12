@@ -509,7 +509,7 @@ fn station_list(cx: &Ctx, plan: &Plan, seg: &Segment, library: &[Drill]) -> Mark
                     div class="station-head" {
                         @if many { (badge(p.index + 1)) }
                         strong { (p.slot.name) }
-                        span class="muted small" { (p.slot.size.label()) }
+                        @if p.slot.name != p.slot.size.label() { span class="muted small" { (p.slot.size.label()) } }
                     }
                     @if let Some(d) = p.drill {
                         div class="station-drill" {
@@ -723,7 +723,7 @@ fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce) -> Markup {
         aside class="library card" data-library aria-label="Drill library" {
             h2 { "Drills" }
             p class="muted small js-only" {
-                "Drag a drill onto a matching station on the rink, or click a drill and then a station."
+                "Drag a drill onto a station it fits on the rink (they light up), or click a drill and then a station."
             }
             div class="library-filters" {
                 input type="search" data-library-search placeholder="Filter drills" aria-label="Filter drills";
