@@ -7,9 +7,12 @@
 //! ├──────────────────────────────────────────────┤
 //! │        rink diagram (top half)     │ legend  │
 //! │ ▒ stations · rotation · equipment · notes ▒  │  strip
-//! │ ① drill name            ② drill name         │
-//! │   how to run it           how to run it      │  drill text, two columns
-//! │   key points              key points         │
+//! │ ┌─────────────────────┬────────────────────┐ │
+//! │ │ ① drill name        │ Key points         │ │  one block per drill,
+//! │ │   zone · min · type │ • …                │ │  never split
+//! │ └─────────────────────┴────────────────────┘ │
+//! │   how to run it, full width                  │
+//! │ ② next drill …                               │
 //! ├──────────────────────────────────────────────┤
 //! │                   team name                  │  footer
 //! └──────────────────────────────────────────────┘
@@ -17,8 +20,8 @@
 //!
 //! Each page is built as one SVG document (in PDF points) and converted with
 //! krilla-svg, with Noto Sans embedded so text stays selectable. A part always
-//! gets one page: the text shrinks, flows into three columns and the diagram
-//! gets smaller until it fits (see [`fits`]).
+//! gets one page: the diagram and then the text get smaller until it fits (see
+//! [`fits`]).
 
 use crate::board;
 use crate::diagram::{LEGEND_H, LEGEND_W, LegendEntry};
@@ -41,41 +44,28 @@ const DIAGRAM_TOP: f32 = HEADER_BOTTOM + 8.0;
 const LEGEND_COL: f32 = 128.0;
 const LEGEND_GAP: f32 = 10.0;
 const FOOTER_TOP: f32 = H - MARGIN - 11.0;
-const COL_GAP: f32 = 14.0;
 
-/// One way to lay out a page: body text size, text columns, diagram height.
+/// One way to lay out a page: body text size and diagram height.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Fit {
     size: f32,
-    cols: usize,
     diagram_h: f32,
 }
 
-impl Fit {
-    fn col_w(self) -> f32 {
-        (CONTENT_W - COL_GAP * (self.cols - 1) as f32) / self.cols as f32
-    }
-}
-
-/// Layouts to try, most readable first: at each text size, two columns, then
-/// three, then a smaller diagram. Below 7 pt only the most compact layout.
+/// Layouts to try, most readable first: at each text size, a smaller diagram
+/// before smaller text. Below 7 pt only the most compact diagram.
 /// A part always fits on one page (coaches read it on the bench), so if even
 /// the last one overflows the text is cut short with a note.
 fn fits() -> Vec<Fit> {
     let mut v = Vec::new();
     for size in [9.0, 8.5, 8.0, 7.5, 7.0] {
-        for (cols, diagram_h) in [(2, 250.0), (3, 250.0), (3, 215.0), (3, 185.0)] {
-            v.push(Fit {
-                size,
-                cols,
-                diagram_h,
-            });
+        for diagram_h in [250.0, 215.0, 185.0, 165.0] {
+            v.push(Fit { size, diagram_h });
         }
     }
     for size in [6.5, 6.0, 5.5] {
         v.push(Fit {
             size,
-            cols: 3,
             diagram_h: 165.0,
         });
     }
@@ -160,57 +150,83 @@ fn wrap(s: &str, size: f32, bold: bool, max: f32) -> Vec<String> {
     lines
 }
 
-// ---- Drill text: lines that flow through columns --------------------------------
+// ---- Drill text: one block per drill, stacked in a single column -------------------
 
-#[derive(Clone, Debug)]
-enum Kind {
-    /// A drill name, with its station number when the page has several.
-    Heading(Option<usize>),
-    Sub,
-    Body,
-    Label,
-    Bullet {
-        first: bool,
-    },
-    Gap,
+/// One drill's text, wrapped for a body size. It is drawn as a title bar split
+/// in half (number and name on the left, key points on the right) with the
+/// description below, and is never split across columns or pages.
+struct Block {
+    number: Option<usize>,
+    title: Vec<String>,
+    sub: Vec<String>,
+    /// Where `sub` starts when it sits on the name's line (offset from the
+    /// name), instead of below it.
+    sub_inline: Option<f32>,
+    /// Each key point's wrapped lines.
+    points: Vec<Vec<String>>,
+    /// Each description paragraph's wrapped lines.
+    body: Vec<Vec<String>>,
 }
 
-#[derive(Clone, Debug)]
-struct Line {
-    kind: Kind,
-    text: String,
-    height: f32,
-    /// Don't leave this line at the bottom of a column without the next one.
-    keep_next: bool,
+/// Sizes and spacing derived from the body text size.
+#[derive(Clone, Copy)]
+struct Metrics {
+    size: f32,
+    hsize: f32,
+    title_h: f32,
+    sub_size: f32,
+    sub_h: f32,
+    label_h: f32,
+    lead: f32,
+    pad: f32,
+    badge_w: f32,
 }
 
-fn drill_lines(plan: &Plan, seg: &Segment, size: f32, col_w: f32) -> Vec<Line> {
+impl Metrics {
+    fn new(size: f32) -> Metrics {
+        let hsize = size * 1.25;
+        let sub_size = size * 0.88;
+        Metrics {
+            size,
+            hsize,
+            title_h: hsize * 1.25,
+            sub_size,
+            sub_h: sub_size * 1.4,
+            label_h: size * 1.35,
+            lead: size * 1.32,
+            pad: size * 0.5,
+            badge_w: size * 2.0,
+        }
+    }
+
+    /// Text width of the bar's left half (or the whole bar without key points).
+    fn left_w(self, has_points: bool) -> f32 {
+        let w = if has_points {
+            CONTENT_W / 2.0
+        } else {
+            CONTENT_W
+        };
+        w - 2.0 * self.pad
+    }
+
+    fn right_w(self) -> f32 {
+        CONTENT_W / 2.0 - 2.0 * self.pad
+    }
+
+    fn body_w(self) -> f32 {
+        CONTENT_W - 2.0 * self.pad
+    }
+}
+
+fn drill_blocks(plan: &Plan, seg: &Segment, m: Metrics) -> Vec<Block> {
     let placed = plan.slots(seg);
     let many = placed.len() > 1;
-    let lead = size * 1.32;
-    let mut lines = Vec::new();
-    let push = |lines: &mut Vec<Line>, kind: Kind, text: String, height: f32, keep_next: bool| {
-        lines.push(Line {
-            kind,
-            text,
-            height,
-            keep_next,
-        });
-    };
-    for p in placed.iter() {
+    let mut blocks = Vec::new();
+    for p in &placed {
         let Some(d) = p.drill else { continue };
-        if !lines.is_empty() {
-            push(&mut lines, Kind::Gap, String::new(), size * 1.1, false);
-        }
-        let indent = if p.number.is_some() { size * 2.0 } else { 0.0 };
-        let hsize = size * 1.25;
-        for (i, l) in wrap(&d.name, hsize, true, col_w - indent)
-            .into_iter()
-            .enumerate()
-        {
-            let badge = p.number.filter(|_| i == 0);
-            push(&mut lines, Kind::Heading(badge), l, hsize * 1.3, true);
-        }
+        let points = d.key_points();
+        let left = m.left_w(!points.is_empty());
+        let indent = if p.number.is_some() { m.badge_w } else { 0.0 };
         let mut sub = vec![
             format!("{} min", seg.station_minutes()),
             d.category.label().to_string(),
@@ -221,176 +237,225 @@ fn drill_lines(plan: &Plan, seg: &Segment, size: f32, col_w: f32) -> Vec<Line> {
         if !p.note.is_empty() {
             sub.push(p.note.to_string());
         }
-        for l in wrap(&sub.join(" · "), size * 0.88, false, col_w) {
-            push(&mut lines, Kind::Sub, l, size * 0.88 * 1.4, true);
-        }
-        for para in d.paragraphs() {
-            for l in wrap(para, size, false, col_w) {
-                push(&mut lines, Kind::Body, l, lead, false);
-            }
-            push(&mut lines, Kind::Gap, String::new(), size * 0.3, false);
-        }
-        let points = d.key_points();
-        if !points.is_empty() {
-            push(
-                &mut lines,
-                Kind::Label,
-                "Key points".into(),
-                size * 1.4,
-                true,
-            );
-            for pt in points {
-                for (i, l) in wrap(pt, size, false, col_w - size).into_iter().enumerate() {
-                    push(&mut lines, Kind::Bullet { first: i == 0 }, l, lead, false);
-                }
-            }
-        }
-    }
-    lines
-}
-
-/// One column's worth of lines, positioned.
-struct Placed {
-    x: f32,
-    y: f32,
-    line: Line,
-}
-
-/// Flow `lines` into the fit's columns between `top` and `bottom`. Returns the
-/// lines that fit and whether all of them did.
-fn flow(lines: &[Line], top: f32, bottom: f32, fit: Fit) -> (Vec<Placed>, bool) {
-    let mut placed = Vec::new();
-    let mut col = 0;
-    let mut y = top;
-    let mut i = 0;
-    while i < lines.len() {
-        let line = &lines[i];
-        let at_top = y == top;
-        if at_top && matches!(line.kind, Kind::Gap) {
-            i += 1;
-            continue;
-        }
-        // Height this line needs to stay with what follows it.
-        let mut need = line.height;
-        let mut j = i;
-        while lines[j].keep_next && j + 1 < lines.len() {
-            j += 1;
-            need += lines[j].height;
-        }
-        let need = if at_top { line.height } else { need };
-        if y + need > bottom {
-            col += 1;
-            if col == fit.cols || at_top {
-                return (placed, false);
-            }
-            y = top;
-            continue;
-        }
-        let x = MARGIN + col as f32 * (fit.col_w() + COL_GAP);
-        placed.push(Placed {
-            x,
-            y,
-            line: line.clone(),
+        let title = wrap(&d.name, m.hsize, true, left - indent);
+        let sub = sub.join(" · ");
+        // Beside a one-line name when there's room, otherwise below it.
+        let after = title.first().map_or(0.0, |t| width(t, m.hsize, true)) + m.size;
+        let sub_inline = (title.len() == 1
+            && after + width(&sub, m.sub_size, false) <= left - indent)
+            .then_some(after);
+        blocks.push(Block {
+            number: p.number,
+            title,
+            sub: wrap(&sub, m.sub_size, false, left - indent),
+            sub_inline,
+            points: points
+                .iter()
+                .map(|pt| wrap(pt, m.size, false, m.right_w() - m.size))
+                .collect(),
+            body: d
+                .paragraphs()
+                .iter()
+                .map(|para| wrap(para, m.size, false, m.body_w()))
+                .collect(),
         });
-        y += line.height;
-        i += 1;
     }
-    (placed, true)
+    blocks
 }
 
-fn draw_line(out: &mut String, p: &Placed, size: f32) {
-    let l = &p.line;
-    match l.kind {
-        Kind::Heading(badge) => {
-            let hsize = size * 1.25;
-            let base = p.y + hsize;
-            let mut x = p.x;
-            if let Some(num) = badge {
-                let r = size * 0.78;
-                let _ = write!(
-                    out,
-                    r#"<circle cx="{}" cy="{}" r="{}" fill="{}"/>"#,
-                    n(x + r),
-                    n(base - hsize * 0.36),
-                    n(r),
-                    c::BADGE
-                );
-                text(
-                    out,
-                    "",
-                    x + r,
-                    base - hsize * 0.36 + size * 0.34,
-                    size * 0.95,
-                    700,
-                    c::BADGE_TEXT,
-                    "middle",
-                    &num.to_string(),
-                );
-                x += size * 2.0;
-            }
-            text(out, "", x, base, hsize, 700, c::INK, "start", &l.text);
+/// Draw `b` with its top at `top`, stopping at `bottom`. Returns where the
+/// block ends and whether all of it fitted. The title bar is drawn whole or
+/// not at all; description lines that don't fit are left off.
+fn draw_block(out: &mut String, b: &Block, top: f32, bottom: f32, m: Metrics) -> (f32, bool) {
+    let has_points = !b.points.is_empty();
+    let sub_h = if b.sub_inline.is_some() {
+        0.0
+    } else {
+        b.sub.len() as f32 * m.sub_h
+    };
+    let left_h = b.title.len() as f32 * m.title_h + sub_h;
+    let right_h = if has_points {
+        m.label_h + b.points.iter().map(|p| p.len()).sum::<usize>() as f32 * m.lead
+    } else {
+        0.0
+    };
+    let bar_h = left_h.max(right_h) + 2.0 * m.pad;
+    if top + bar_h > bottom {
+        return (top, false);
+    }
+
+    // The bar, split down the middle when there are key points.
+    let _ = write!(
+        out,
+        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="3" fill="{}" stroke="{}" stroke-width="0.6"/>"#,
+        n(MARGIN),
+        n(top),
+        n(CONTENT_W),
+        n(bar_h),
+        c::STRIP,
+        c::RULE
+    );
+    let mid = MARGIN + CONTENT_W / 2.0;
+    if has_points {
+        let _ = write!(
+            out,
+            r#"<path d="M {} {} L {} {}" stroke="{}" stroke-width="0.6"/>"#,
+            n(mid),
+            n(top),
+            n(mid),
+            n(top + bar_h),
+            c::RULE
+        );
+    }
+
+    // Left: number badge, name, then zone · minutes · category · note.
+    let lx = MARGIN + m.pad;
+    let tx = if b.number.is_some() {
+        lx + m.badge_w
+    } else {
+        lx
+    };
+    let mut y = top + m.pad;
+    for (i, l) in b.title.iter().enumerate() {
+        let base = y + m.hsize;
+        if let (0, Some(num)) = (i, b.number) {
+            let r = m.size * 0.78;
+            let cy = base - m.hsize * 0.36;
+            let _ = write!(
+                out,
+                r#"<circle cx="{}" cy="{}" r="{}" fill="{}"/>"#,
+                n(lx + r),
+                n(cy),
+                n(r),
+                c::BADGE
+            );
+            text(
+                out,
+                "",
+                lx + r,
+                cy + m.size * 0.34,
+                m.size * 0.95,
+                700,
+                c::BADGE_TEXT,
+                "middle",
+                &num.to_string(),
+            );
         }
-        Kind::Sub => text(
+        text(out, "", tx, base, m.hsize, 700, c::INK, "start", l);
+        if let Some(dx) = b.sub_inline {
+            let s = b.sub.join(" ");
+            text(
+                out,
+                "",
+                tx + dx,
+                base,
+                m.sub_size,
+                400,
+                c::MUTED,
+                "start",
+                &s,
+            );
+        }
+        y += m.title_h;
+    }
+    for l in b.sub.iter().filter(|_| b.sub_inline.is_none()) {
+        text(
             out,
             "",
-            p.x,
-            p.y + size * 0.95,
-            size * 0.88,
+            tx,
+            y + m.sub_size * 1.05,
+            m.sub_size,
             400,
             c::MUTED,
             "start",
-            &l.text,
-        ),
-        Kind::Body => text(
+            l,
+        );
+        y += m.sub_h;
+    }
+
+    // Right: key points.
+    if has_points {
+        let rx = mid + m.pad;
+        let mut y = top + m.pad;
+        text(
             out,
             "",
-            p.x,
-            p.y + size * 1.02,
-            size,
-            400,
-            c::INK,
-            "start",
-            &l.text,
-        ),
-        Kind::Label => text(
-            out,
-            "",
-            p.x,
-            p.y + size * 1.15,
-            size * 0.95,
+            rx,
+            y + m.size * 1.0,
+            m.size * 0.95,
             700,
             c::INK,
             "start",
-            &l.text,
-        ),
-        Kind::Bullet { first } => {
-            if first {
-                text(
-                    out,
-                    "",
-                    p.x + size * 0.15,
-                    p.y + size * 1.02,
-                    size,
-                    700,
-                    c::INK,
-                    "start",
-                    "•",
-                );
+            "Key points",
+        );
+        y += m.label_h;
+        for point in &b.points {
+            for (i, l) in point.iter().enumerate() {
+                let base = y + m.size * 1.02;
+                if i == 0 {
+                    text(
+                        out,
+                        "",
+                        rx + m.size * 0.15,
+                        base,
+                        m.size,
+                        700,
+                        c::INK,
+                        "start",
+                        "•",
+                    );
+                }
+                text(out, "", rx + m.size, base, m.size, 400, c::INK, "start", l);
+                y += m.lead;
+            }
+        }
+    }
+
+    // Below: the description at full width.
+    let mut y = top + bar_h;
+    if !b.body.is_empty() {
+        y += m.size * 0.45;
+    }
+    for (pi, para) in b.body.iter().enumerate() {
+        if pi > 0 {
+            y += m.size * 0.35;
+        }
+        for l in para {
+            if y + m.lead > bottom {
+                return (y, false);
             }
             text(
                 out,
                 "",
-                p.x + size,
-                p.y + size * 1.02,
-                size,
+                lx,
+                y + m.size * 1.02,
+                m.size,
                 400,
                 c::INK,
                 "start",
-                &l.text,
+                l,
             );
+            y += m.lead;
         }
-        Kind::Gap => {}
     }
+    (y, true)
+}
+
+/// Stack the blocks from `top` down to `bottom`. Returns whether all fitted;
+/// whatever fits is drawn either way.
+fn draw_blocks(out: &mut String, blocks: &[Block], top: f32, bottom: f32, m: Metrics) -> bool {
+    let mut y = top;
+    for (i, b) in blocks.iter().enumerate() {
+        if i > 0 {
+            y += m.size * 1.0;
+        }
+        let (end, ok) = draw_block(out, b, y, bottom, m);
+        if !ok {
+            return false;
+        }
+        y = end;
+    }
+    true
 }
 
 // ---- The strip between diagram and drill text ------------------------------------
@@ -691,25 +756,25 @@ fn segment_page(plan: &Plan, seg_index: usize) -> (String, Fit) {
     let bottom = FOOTER_TOP - 6.0;
     let all = fits();
     let mut chosen = None;
+    let mut no_drills = true;
     for fit in &all {
-        let (head, text_top) = page_head(plan, seg, &legend, fit.diagram_h);
-        let lines = drill_lines(plan, seg, fit.size, fit.col_w());
-        let (placed, ok) = flow(&lines, text_top, bottom, *fit);
-        if ok {
-            chosen = Some((head, text_top, placed, *fit, false));
+        let (mut head, text_top) = page_head(plan, seg, &legend, fit.diagram_h);
+        let m = Metrics::new(fit.size);
+        let blocks = drill_blocks(plan, seg, m);
+        no_drills = blocks.is_empty();
+        if draw_blocks(&mut head, &blocks, text_top, bottom, m) {
+            chosen = Some((head, text_top, *fit, false));
             break;
         }
     }
-    let (mut body, text_top, placed, fit, cut) = chosen.unwrap_or_else(|| {
+    let (mut body, text_top, fit, cut) = chosen.unwrap_or_else(|| {
         let fit = all[all.len() - 1];
-        let (head, text_top) = page_head(plan, seg, &legend, fit.diagram_h);
-        let lines = drill_lines(plan, seg, fit.size, fit.col_w());
-        let (placed, _) = flow(&lines, text_top, bottom - 12.0, fit);
-        (head, text_top, placed, fit, true)
+        let (mut head, text_top) = page_head(plan, seg, &legend, fit.diagram_h);
+        let m = Metrics::new(fit.size);
+        let blocks = drill_blocks(plan, seg, m);
+        draw_blocks(&mut head, &blocks, text_top, bottom - 12.0, m);
+        (head, text_top, fit, true)
     });
-    for p in &placed {
-        draw_line(&mut body, p, fit.size);
-    }
     if cut {
         text(
             &mut body,
@@ -723,7 +788,7 @@ fn segment_page(plan: &Plan, seg_index: usize) -> (String, Fit) {
             "Some drill text didn't fit on this page: see the drills in the app.",
         );
     }
-    if placed.is_empty() && seg.stations.is_empty() {
+    if no_drills && seg.stations.is_empty() {
         text(
             &mut body,
             "",
@@ -896,8 +961,8 @@ mod tests {
         // Short text: the roomiest layout.
         let plan = plan_with_text(sentence);
         assert_eq!(segment_page(&plan, 0).1, fits()[0]);
-        // Longer text: smaller or more columns, but still one page each.
-        let plan = plan_with_text(&sentence.repeat(18));
+        // Longer text: smaller diagram or text, but still one page each.
+        let plan = plan_with_text(&sentence.repeat(14));
         let fit = segment_page(&plan, 0).1;
         assert!(fit != fits()[0] && fit.size >= 7.0, "{fit:?}");
         assert_eq!(page_svgs(&plan).len(), 2);

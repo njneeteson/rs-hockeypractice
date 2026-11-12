@@ -430,6 +430,10 @@ fn preview_url(cx: &Ctx, plan: &Plan, seg: &Segment) -> String {
     // lengths and the number of parts count too.
     let minutes: Vec<u32> = plan.segments.iter().map(|s| s.minutes).collect();
     format!("{:?}{:?}{minutes:?}", plan.practice, seg).hash(&mut h);
+    // So is the page layout itself: a new version of the app (which means a
+    // restart) mustn't show previews cached from the old one.
+    static STARTED: std::sync::OnceLock<std::time::SystemTime> = std::sync::OnceLock::new();
+    STARTED.get_or_init(std::time::SystemTime::now).hash(&mut h);
     for st in &seg.stations {
         format!("{:?}", plan.drills.get(&st.drill_id)).hash(&mut h);
     }

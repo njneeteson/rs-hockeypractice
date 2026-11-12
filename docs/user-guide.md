@@ -269,12 +269,13 @@ Each page has:
 - the **rink** with every station's drill, numbered, and the **legend** of the
   symbols used;
 - the **strip**: layout, rotation, goalie warm-up, equipment and notes;
-- each station's **drill**: name, station, minutes, category, note, how to run
-  it and key points;
+- one block per **drill**, kept together: a title bar with the station number,
+  name, zone, minutes, category and note on the left and the key points on the
+  right, then how to run it underneath;
 - a one-line **footer**: team, practice title and page number.
 
-A part always fits on one page. When there is a lot of text, it moves to three
-columns, the rink gets smaller, and then the text gets smaller. Only when even
+A part always fits on one page. When there is a lot of text, the rink gets
+smaller, and then the text gets smaller. Only when even
 that isn't enough is the text cut short, with a note at the bottom. If that
 happens, shorten the instructions in the library, or split the part in two.
 

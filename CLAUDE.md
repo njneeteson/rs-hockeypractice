@@ -38,7 +38,8 @@ overview and layout.
   slot's, same place on the rink); never compare sizes with `==` for
   placement. Drop targets list what they take in `data-accepts`.
 - A part is always exactly one PDF page: `pdf::fits` lists the layouts tried
-  (text size, columns, diagram height). Don't reintroduce continuation pages.
+  (text size, diagram height). Drill text is one unsplit block per drill in
+  a single column. Don't reintroduce continuation pages or text columns.
 - The practice builder's forms live inside `#builder-main`, which htmx swaps
   in place (plus `#practice-head`, `#practice-tiles`, `#toasts` out of band).
   New builder controls go inside it so they keep the scroll position;

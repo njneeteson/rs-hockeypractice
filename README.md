@@ -60,11 +60,12 @@ drills and practices.
   bench can follow one sheet. A one-line header has the date, clock time (or
   elapsed time), part title and length; the rink diagram with a **legend** to
   its right listing every symbol on that rink; a strip with the layout,
-  rotation, goalie warm-up, equipment and notes; then each station's drill
-  text. A one-line footer has the team, practice title and page number. When
-  the text is long it moves to three columns, the diagram gets smaller and the
-  text smaller (down to 5.5 pt); only if it still doesn't fit is it cut short,
-  with a note.
+  rotation, goalie warm-up, equipment and notes; then one block per drill,
+  full width and never split: a title bar with the number, name and details on
+  the left and the key points on the right, and the description below it. A
+  one-line footer has the team, practice title and page number. When the text
+  is long the diagram gets smaller, then the text (down to 5.5 pt); only if it
+  still doesn't fit is it cut short, with a note.
 
 For a walkthrough with screenshots, written for coaches using the app, see the
 **[user guide](docs/user-guide.md)**.
