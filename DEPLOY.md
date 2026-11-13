@@ -7,7 +7,7 @@ proxy, at a path such as `https://miniserver.local/localapp`.
 
 | | |
 |---|---|
-| Image | `ghcr.io/<your-github-user>/localapp:latest` (built by CI), or build it yourself |
+| Image | `ghcr.io/<your-github-user>/rs-hockeypractice:latest` (built by CI), or build it yourself |
 | Port | `8080`, plain HTTP; the proxy provides HTTPS |
 | Data | the `/data` volume: `auth.sqlite` (accounts) and `app.sqlite` (app data) |
 | URL path | `LOCALAPP_BASE_PATH`, e.g. `/localapp`; the proxy must **not** strip it |
@@ -21,7 +21,7 @@ The CI workflow publishes an image on every push to `main` and on version tags
 (`v0.2.0` → `0.2.0` and `0.2`). The first time, make the package visible to
 your server:
 
-- either make it public (GitHub → your profile → *Packages* → `localapp` →
+- either make it public (GitHub → your profile → *Packages* → `rs-hockeypractice` →
   *Package settings* → *Change visibility*),
 - or keep it private and sign the server in once with a personal access token
   that has the `read:packages` scope:
@@ -34,11 +34,11 @@ For an ARM server (Raspberry Pi), add `linux/arm64` to `PLATFORMS` in
 
 ```sh
 # On the PC, in the repository (use --platform linux/arm64 for an ARM server)
-docker build -t localapp:latest .
-docker save localapp:latest | gzip > localapp.tar.gz
+docker build -t rs-hockeypractice:latest .
+docker save rs-hockeypractice:latest | gzip > rs-hockeypractice.tar.gz
 
 # On the server
-gunzip -c localapp.tar.gz | docker load
+gunzip -c rs-hockeypractice.tar.gz | docker load
 ```
 
 ## Compose file for the server
@@ -47,7 +47,7 @@ gunzip -c localapp.tar.gz | docker load
 # ~/localapp/compose.yaml
 services:
   localapp:
-    image: ghcr.io/<your-github-user>/localapp:latest
+    image: ghcr.io/<your-github-user>/rs-hockeypractice:latest
     restart: unless-stopped
     environment:
       LOCALAPP_BASE_PATH: /localapp

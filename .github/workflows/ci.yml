@@ -20,7 +20,9 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/localapp
+  # Named after the repository (ghcr.io/<owner>/<repo>), so each app built from
+  # the template gets its own package. Registry names must be lower case.
+  IMAGE: ghcr.io/${{ github.repository }}
   # Add ",linux/arm64" for a Raspberry Pi or other ARM server. It is built
   # under emulation, so it is much slower (expect 30+ minutes).
   PLATFORMS: linux/amd64

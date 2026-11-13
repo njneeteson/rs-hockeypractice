@@ -2,7 +2,7 @@
 #
 # LocalApp server image.
 #
-#   docker build -t localapp .
+#   docker build -t rs-hockeypractice .
 #
 # Stage 1 compiles the server; stage 2 is a minimal runtime (no shell, no
 # package manager) that runs as an unprivileged user. App data lives in the

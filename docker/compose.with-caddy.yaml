@@ -12,7 +12,7 @@
 services:
   localapp:
     build: ..
-    image: localapp:latest
+    image: rs-hockeypractice:latest
     restart: unless-stopped
     environment:
       LOCALAPP_BASE_PATH: /localapp

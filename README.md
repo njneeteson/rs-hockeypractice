@@ -143,7 +143,7 @@ duplicate it instead.
 | Storage | `auth.sqlite` for accounts, `app.sqlite` for the app's data, each with versioned migrations |
 | Security | Cross-site request blocking, strict CSP and security headers, `no-store` on pages |
 | Operations | `serve`, `admin create/reset-password/list` and `healthcheck` commands; a distroless non-root Docker image; compose file; Caddy/nginx/Traefik examples |
-| CI | `fmt`, `clippy -D warnings` and tests on every push; image published to `ghcr.io` from `main` and `v*` tags |
+| CI | `fmt`, `clippy -D warnings` and tests on every push; image published to `ghcr.io/<owner>/rs-hockeypractice` from `main` and `v*` tags |
 | Tests | Unit tests plus HTTP integration tests that drive the whole app through a cookie-aware test client |
 
 ## Layout

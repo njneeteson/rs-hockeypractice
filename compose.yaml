@@ -9,7 +9,7 @@
 services:
   localapp:
     build: .
-    image: localapp:latest
+    image: rs-hockeypractice:latest
     restart: unless-stopped
     environment:
       # The URL prefix the proxy forwards to the app (without stripping it).
