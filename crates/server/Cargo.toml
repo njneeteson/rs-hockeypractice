@@ -39,5 +39,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
-serde_html_form = "0.2"
+serde_html_form = "0.4"
 tempfile.workspace = true
