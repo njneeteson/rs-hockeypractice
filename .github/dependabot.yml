@@ -13,6 +13,10 @@ updates:
       # One PR for all patch and minor updates; majors come one by one.
       cargo-minor:
         update-types: [minor, patch]
+    ignore:
+      # usvg must be the version krilla-svg uses (its types cross between them),
+      # so it moves only when krilla-svg does: bump both by hand then.
+      - dependency-name: usvg
 
   - package-ecosystem: github-actions
     directory: /

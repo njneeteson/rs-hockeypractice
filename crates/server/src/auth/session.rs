@@ -7,8 +7,8 @@ use crate::config::Config;
 use axum::http::header::{self, COOKIE};
 use axum::http::{HeaderMap, HeaderValue};
 use axum::response::Response;
-use rand::RngCore;
-use rand::rngs::OsRng;
+use rand::TryRng;
+use rand::rngs::SysRng;
 use sha2::{Digest, Sha256};
 
 pub const SESSION_COOKIE: &str = "localapp_session";
@@ -21,10 +21,17 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// `N` bytes from the operating system's secure random source.
+pub fn random_bytes<const N: usize>() -> [u8; N] {
+    let mut bytes = [0u8; N];
+    SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("the operating system's random source failed");
+    bytes
+}
+
 pub fn new_token() -> String {
-    let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    hex(&bytes)
+    hex(&random_bytes::<32>())
 }
 
 pub fn hash_token(token: &str) -> String {

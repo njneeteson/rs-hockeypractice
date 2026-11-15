@@ -1,7 +1,7 @@
 //! Password hashing (Argon2id) and password rules.
 
+use crate::auth::session::random_bytes;
 use argon2::Argon2;
-use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use std::sync::OnceLock;
 
@@ -9,7 +9,8 @@ pub const MIN_LENGTH: usize = 8;
 const MAX_LENGTH: usize = 256;
 
 pub fn hash(password: &str) -> anyhow::Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
+    let salt = SaltString::encode_b64(&random_bytes::<16>())
+        .map_err(|e| anyhow::anyhow!("encoding salt: {e}"))?;
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map(|h| h.to_string())
@@ -49,8 +50,7 @@ pub fn validate_new(password: &str, confirm: &str) -> Result<(), String> {
 /// A random temporary password such as `kfmr-7wq2-pxne-4c9h`, for new accounts and resets.
 pub fn generate_temporary() -> String {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
-    let mut bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut bytes);
+    let bytes = random_bytes::<16>();
     let chars: Vec<char> = bytes
         .iter()
         .map(|b| ALPHABET[usize::from(*b) % ALPHABET.len()] as char)

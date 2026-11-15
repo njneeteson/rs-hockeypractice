@@ -1,5 +1,9 @@
 # Hockey Practice Planner
 
+[![CI](https://github.com/njneeteson/rs-hockeypractice/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/njneeteson/rs-hockeypractice/actions/workflows/ci.yml)
+[![Tests](https://github.com/njneeteson/rs-hockeypractice/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/njneeteson/rs-hockeypractice/actions/workflows/tests.yml)
+[![Coverage](https://codecov.io/gh/njneeteson/rs-hockeypractice/branch/main/graph/badge.svg)](https://codecov.io/gh/njneeteson/rs-hockeypractice)
+
 A self-hosted web app for planning hockey practices. Coaches keep libraries
 of drills, each drawn on a rink diagram, then build a practice by dropping
 drills onto the ice. Coaches in the same team plan together. The finished plan downloads as a PDF with one
@@ -162,7 +166,7 @@ duplicate it instead.
 | Storage | `auth.sqlite` for accounts, `app.sqlite` for the app's data, each with versioned migrations |
 | Security | Cross-site request blocking, strict CSP and security headers (HSTS over HTTPS), `no-store` on pages, a 1 MB request limit, per-user limits on PDF rendering, quotas per library and team |
 | Operations | `serve`, `admin create/reset-password/list`, `backup`, `backup-check` and `healthcheck` commands; a distroless non-root Docker image; compose files for a reverse proxy or a Cloudflare Tunnel; Caddy/nginx/Traefik examples |
-| CI | `fmt`, `clippy -D warnings`, tests and `cargo deny` (advisories, licences, sources) on every push, with actions pinned to commit SHAs; Dependabot updates weekly; image published to `ghcr.io/<owner>/rs-hockeypractice` from `main` and `v*` tags |
+| CI | `fmt`, `clippy -D warnings`, tests and `cargo deny` (advisories, licences, sources) on every push, plus a Tests workflow that measures coverage with `cargo llvm-cov` and reports it to Codecov (the README badges); with actions pinned to commit SHAs; Dependabot updates weekly; image published to `ghcr.io/<owner>/rs-hockeypractice` from `main` and `v*` tags |
 | Tests | Unit tests plus HTTP integration tests that drive the whole app through a cookie-aware test client |
 
 ## Layout
