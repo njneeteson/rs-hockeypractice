@@ -1,6 +1,7 @@
 //! The `drills` table: drill libraries, one per person and one per team.
 
 use super::Database;
+use crate::development::Split;
 use crate::diagram::Diagram;
 use crate::drill::{Category, Drill, DrillFields};
 use crate::owner::{Library, MemberId, limits};
@@ -8,7 +9,7 @@ use crate::rink::IceSize;
 use rusqlite::{OptionalExtension, Row, params};
 
 const SELECT: &str = "SELECT id, name, ice, category, minutes, description, points, diagram,
-    updated_at, owner_member, owner_team, copied_from FROM drills";
+    updated_at, owner_member, owner_team, copied_from, focus FROM drills";
 
 /// Which drills to list.
 #[derive(Clone, Debug, Default)]
@@ -51,6 +52,9 @@ fn row(r: &Row<'_>) -> rusqlite::Result<Drill> {
             None => Library::Personal(MemberId(member.unwrap_or(0))),
         },
         copied_from: r.get(11)?,
+        focus: r
+            .get::<_, Option<String>>(12)?
+            .and_then(|s| Split::from_key(&s)),
     })
 }
 
@@ -144,8 +148,8 @@ impl Database {
         self.atomic(|| {
             self.conn.execute(
                 "INSERT INTO drills (name, ice, category, minutes, description, points, diagram,
-                owner_member, owner_team, copied_from)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                owner_member, owner_team, copied_from, focus)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     f.name,
                     f.ice.key(),
@@ -156,7 +160,8 @@ impl Database {
                     f.diagram.to_json(),
                     member,
                     team,
-                    copied_from
+                    copied_from,
+                    f.focus.map(|s| s.key())
                 ],
             )?;
             let id = self.conn.last_insert_rowid();
@@ -183,7 +188,7 @@ impl Database {
         self.atomic(|| {
             self.conn.execute(
             "UPDATE drills SET name = ?2, ice = ?3, category = ?4, minutes = ?5, description = ?6,
-                points = ?7, diagram = ?8, updated_at = datetime('now')
+                points = ?7, diagram = ?8, focus = ?9, updated_at = datetime('now')
              WHERE id = ?1",
             params![
                 id,
@@ -193,7 +198,8 @@ impl Database {
                 f.minutes,
                 f.description,
                 f.points,
-                f.diagram.to_json()
+                f.diagram.to_json(),
+                f.focus.map(|s| s.key())
             ],
         )?;
             self.set_equipment(id, &f.equipment)?;
@@ -280,6 +286,7 @@ pub(crate) mod tests {
                 items: vec![Item::Cone { x: 20.0, y: 20.0 }],
             },
             equipment: vec![(Equipment::Pucks, 20), (Equipment::Cones, 4)],
+            focus: Some(Split([60, 40, 0, 0, 0])),
         }
     }
 

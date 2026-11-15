@@ -33,6 +33,7 @@ async fn new_drill(app: &mut TestApp, lib: &str, name: &str) -> i64 {
                 ("description", "Pass and follow."),
                 ("points", ""),
                 ("diagram", DIAGRAM),
+                ("focus_technical", "100"),
             ],
         )
         .await;
@@ -130,6 +131,10 @@ async fn other_peoples_things_are_not_found() {
         ),
         (format!("/teams/{t}/members/1/remove"), vec![]),
         (format!("/teams/{t}/leave"), vec![]),
+        (
+            format!("/teams/{t}/development"),
+            vec![("age", "u7".into()), ("targets", "hockey_canada".into())],
+        ),
         (
             format!("/practices/{p}"),
             vec![("date", "2026-12-02".into()), ("ice", "half".into())],
@@ -300,6 +305,7 @@ async fn team_members_plan_together() {
                 ("ice", "half"),
                 ("minutes", "8"),
                 ("diagram", DIAGRAM),
+                ("focus_technical", "100"),
             ],
         )
         .await;
@@ -339,6 +345,7 @@ async fn team_members_plan_together() {
             ("ice", "half"),
             ("minutes", "8"),
             ("diagram", DIAGRAM),
+            ("focus_technical", "100"),
         ],
     )
     .await;

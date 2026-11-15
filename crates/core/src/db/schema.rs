@@ -149,8 +149,18 @@ CREATE INDEX drills_owner_member ON drills(owner_member);
 CREATE INDEX drills_owner_team ON drills(owner_team);
 "#;
 
+/// V7: Hockey Canada's development model. A drill splits its time across the
+/// five levels (`focus`, "50,40,10,0,0"; NULL until someone sets it); a team has
+/// an age division (`age`, a key; '' when not set) and may override the
+/// division's targets (`targets`, same form as `focus`; NULL for the defaults).
+const V7: &str = r#"
+ALTER TABLE drills ADD COLUMN focus TEXT;
+ALTER TABLE teams ADD COLUMN age TEXT NOT NULL DEFAULT '';
+ALTER TABLE teams ADD COLUMN targets TEXT;
+"#;
+
 /// Ordered migrations; index + 1 is the resulting schema version.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
 
 /// Versions whose migration rebuilds a table that others reference, so it
 /// runs with foreign keys off (SQLite's documented way to change a table's

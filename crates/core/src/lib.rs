@@ -16,6 +16,7 @@ pub mod enum_macro;
 
 pub mod board;
 pub mod db;
+pub mod development;
 pub mod diagram;
 pub mod drill;
 pub mod owner;

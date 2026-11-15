@@ -1,5 +1,6 @@
 //! Drills: what they need (ice, equipment), how to run them and their diagram.
 
+use crate::development::Split;
 use crate::diagram::Diagram;
 use crate::owner::Library;
 use crate::rink::IceSize;
@@ -55,6 +56,9 @@ pub struct Drill {
     /// Equipment with quantities, in [`Equipment::ALL`] order.
     pub equipment: Vec<(Equipment, u32)>,
     pub updated_at: String,
+    /// How its time splits across the development levels (`None`: not set
+    /// yet, for drills from before the development model).
+    pub focus: Option<Split>,
     /// Whose library it's in.
     pub library: Library,
     /// The drill it was copied from, if any (in any library).
@@ -72,6 +76,7 @@ pub struct DrillFields {
     pub points: String,
     pub diagram: Diagram,
     pub equipment: Vec<(Equipment, u32)>,
+    pub focus: Option<Split>,
 }
 
 impl DrillFields {
@@ -126,6 +131,7 @@ impl Drill {
             points: self.points.clone(),
             diagram: self.diagram.clone(),
             equipment: self.equipment.clone(),
+            focus: self.focus,
         }
     }
 
@@ -176,6 +182,7 @@ mod tests {
                 (Equipment::Cones, 4),
                 (Equipment::Cones, 2),
             ],
+            focus: None,
         }
     }
 

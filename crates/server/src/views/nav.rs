@@ -11,6 +11,7 @@ pub enum Nav {
     Practices,
     Drills,
     Teams,
+    Guidelines,
     Account,
     Users,
 }
@@ -41,6 +42,7 @@ const SECTIONS: &[(&str, &[Item])] = &[
             item(Nav::Practices, "Practices", "/practices", false),
             item(Nav::Drills, "Drill library", "/drills", false),
             item(Nav::Teams, "Teams", "/teams", false),
+            item(Nav::Guidelines, "Development guide", "/development", false),
         ],
     ),
     (

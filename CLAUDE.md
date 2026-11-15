@@ -61,6 +61,11 @@ overview and layout.
   Stations only use their practice's team's drills (`set_station` enforces
   it); put drills in with `place_drill`, which copies others in. Copies are
   independent; never share a drill row between libraries.
+- **Development model:** levels, targets by age division (`AgeDivision::hockey_canada`)
+  and the counting rule (`Plan::segment_composition`: a part's minutes shared
+  equally by its drills) live in `development.rs` / `practice.rs`. Every drill
+  form must send a split (`focus_<level>`, 5% steps, 100%); new example drills
+  need one too. Level colours are the `--level-*` tokens.
 - **Limits:** quotas live in `owner::limits` and are checked in core; PDF and
   preview rendering goes through `AppState::render_permit`.
 - **Database work** goes through `cx.db(|db| ...)` (runs on a blocking thread).

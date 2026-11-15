@@ -4,6 +4,7 @@
 //! plan: a block of time whose ice is split by a [`Layout`] into stations,
 //! each running one drill.
 
+use crate::development::{AgeDivision, Composition, Split};
 use crate::diagram::{Diagram, Item};
 use crate::drill::{Drill, Equipment};
 use crate::rink::{Layout, PracticeIce, Slot};
@@ -21,6 +22,19 @@ pub struct Team {
     pub members: u32,
     /// Number of drills in the team's library.
     pub drills: u32,
+    /// The age division, which sets the development targets.
+    pub age: Option<AgeDivision>,
+    /// Targets an owner set instead of Hockey Canada's for the division.
+    pub custom_targets: Option<Split>,
+}
+
+impl Team {
+    /// The share of practice time to aim for at each development level: the
+    /// owner's own targets, else Hockey Canada's for the age division.
+    pub fn targets(&self) -> Option<Split> {
+        self.custom_targets
+            .or_else(|| self.age.and_then(AgeDivision::hockey_canada))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -348,6 +362,39 @@ pub struct PlacedSlot<'a> {
 impl Plan {
     pub fn total_minutes(&self) -> u32 {
         self.segments.iter().map(|s| s.minutes).sum()
+    }
+
+    /// Minutes one player spends at each development level in a part.
+    ///
+    /// Each of a part's k drills counts for minutes / k per player: with a
+    /// rotation, every player goes through every station in turn; without one,
+    /// groups run different drills at the same time and each player is at one
+    /// of them. A part with one drill counts all its minutes; a part with none
+    /// (or only a goalie warm-up) doesn't count.
+    pub fn segment_composition(&self, seg: &Segment) -> Composition {
+        let drills: Vec<&Drill> = seg
+            .stations
+            .iter()
+            .filter_map(|st| self.drills.get(&st.drill_id))
+            .collect();
+        let mut c = Composition::default();
+        if drills.is_empty() {
+            return c;
+        }
+        let each = seg.minutes as f32 / drills.len() as f32;
+        for d in drills {
+            c.add(d.focus, each);
+        }
+        c
+    }
+
+    /// Minutes one player spends at each development level in the practice.
+    pub fn composition(&self) -> Composition {
+        let mut c = Composition::default();
+        for seg in &self.segments {
+            c.merge(&self.segment_composition(seg));
+        }
+        c
     }
 
     /// Minutes from the start of practice to the start of segment `i`.

@@ -1,6 +1,7 @@
 //! The `practices` table: one row per practice plan.
 
 use super::Database;
+use crate::development::Composition;
 use crate::owner::{MemberId, limits};
 use crate::practice::{Plan, Practice, PracticeFields};
 use crate::rink::{Layout, PracticeIce};
@@ -189,6 +190,27 @@ impl Database {
         Ok(new_id)
     }
 
+    /// What a team's practices add up to, per player: those dated up to
+    /// `until` (all of them with `None`), and how many practices that is.
+    pub fn team_composition(
+        &self,
+        team: i64,
+        until: Option<NaiveDate>,
+    ) -> anyhow::Result<(Composition, u32)> {
+        let ids: Vec<i64> = self.query_all(
+            "SELECT id FROM practices WHERE team_id = ?1 AND (?2 IS NULL OR date <= ?2)",
+            params![team, until.map(|d| d.to_string())],
+            |r| r.get(0),
+        )?;
+        let mut c = Composition::default();
+        for id in &ids {
+            if let Some(plan) = self.plan(*id)? {
+                c.merge(&plan.composition());
+            }
+        }
+        Ok((c, ids.len() as u32))
+    }
+
     /// A practice with its pages and drills, ready to show or print.
     pub fn plan(&self, id: i64) -> anyhow::Result<Option<Plan>> {
         let Some(practice) = self.practice(id)? else {
@@ -254,5 +276,60 @@ pub(crate) mod tests {
         );
         db.delete_practice(id).unwrap();
         assert!(db.practice(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn practices_add_up_per_player() {
+        use crate::db::drills::tests::sample;
+        use crate::development::{Level, Split};
+        use crate::practice::SegmentFields;
+        use crate::rink::{End, IceSize, Layout};
+        let db = Database::in_memory().unwrap();
+        let p = practice(&db, PracticeIce::Half);
+        let lib = team_lib(&db);
+        let drill = |name: &str, focus: Option<Split>| {
+            let mut f = sample(name, IceSize::QUARTER);
+            f.focus = focus;
+            db.create_drill(lib, f).unwrap()
+        };
+        let skills = drill("Skills", Some(Split::TECHNICAL));
+        let battle = drill("Battle", Some(Split([0, 100, 0, 0, 0])));
+        let old = drill("Old", None);
+        let part = |minutes: u32, rotation: Option<u32>| {
+            db.add_segment(
+                p,
+                SegmentFields {
+                    title: String::new(),
+                    minutes,
+                    layout: Layout::Half(End {
+                        zone: false,
+                        lanes: 2,
+                    }),
+                    rotation,
+                    notes: String::new(),
+                },
+            )
+            .unwrap()
+        };
+        // Two stations rotating: each player does 10 minutes of each.
+        let a = part(20, Some(10));
+        db.set_station(a, 0, skills, "").unwrap();
+        db.set_station(a, 1, battle, "").unwrap();
+        // One drill: all 12 minutes. A part with no drills doesn't count.
+        let b = part(12, None);
+        db.set_station(b, 0, old, "").unwrap();
+        part(5, None);
+
+        let c = db.plan(p).unwrap().unwrap().composition();
+        assert_eq!(c.minutes_at(Level::Technical), 10.0);
+        assert_eq!(c.minutes_at(Level::IndividualTactics), 10.0);
+        assert_eq!(c.unclassified, 12.0);
+        assert_eq!(c.percent(Level::Technical), Some(50.0));
+
+        let team = lib.team().unwrap();
+        let before = NaiveDate::from_ymd_opt(2026, 1, 1);
+        assert_eq!(db.team_composition(team, before).unwrap().1, 0);
+        let (season, n) = db.team_composition(team, None).unwrap();
+        assert_eq!((season, n), (c, 1));
     }
 }

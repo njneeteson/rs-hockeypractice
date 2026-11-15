@@ -6,6 +6,7 @@ use crate::flash;
 use crate::form;
 use crate::state::Shared;
 use crate::views::components::{card, empty, heading, legend_list, link_button, notice, svg};
+use crate::views::development::{GUIDE_PATH, focus_fields, parse_focus, split_bar};
 use crate::views::forms::{Live, LiveTarget, action_button, field, live_form};
 use crate::views::{Nav, Page, page};
 use axum::extract::Query;
@@ -131,6 +132,12 @@ pub fn drill_card(cx: &Ctx, d: &Drill) -> Markup {
                 }
                 @if !d.equipment.is_empty() {
                     div class="small" { (d.equipment_summary()) }
+                }
+                div class="drill-focus" {
+                    (split_bar(d.focus))
+                    @if d.focus.is_none() {
+                        span class="small warn-text" { "Development split not set" }
+                    }
                 }
             }
         }
@@ -331,6 +338,7 @@ fn drill_form(
     used: u32,
     back: &str,
     new_in: Option<Library>,
+    guide: &str,
 ) -> Markup {
     let qty = |e: Equipment| {
         f.equipment
@@ -380,6 +388,8 @@ fn drill_form(
                     }
                 }
             }))
+            (card("Development", "How the drill's time splits across Hockey Canada's development levels. Practices add these up and compare them with the team's targets.",
+                focus_fields(f.focus, guide)))
             (card("Diagram", "", diagram_editor(f.ice, &f.diagram, &f.name)))
             div class="grid" {
                 (card("How to run it", "Shown under the rink on the printed plan.", html! {
@@ -428,6 +438,7 @@ fn blank(ice: IceSize) -> DrillFields {
         points: String::new(),
         diagram: Diagram::default(),
         equipment: Vec::new(),
+        focus: None,
     }
 }
 
@@ -437,7 +448,7 @@ async fn new_page(cx: Ctx, Query(q): Query<NewQuery>) -> AppResult<Page> {
     let back = library_url(&cx, lib);
     let body = html! {
         (heading("New drill", &format!("In {name}."), link_button(&back, "← Drill library", false)))
-        (drill_form(&cx.url("/drills"), &f, 0, &back, Some(lib)))
+        (drill_form(&cx.url("/drills"), &f, 0, &back, Some(lib), &cx.url(GUIDE_PATH)))
     };
     Ok(page(&cx, Nav::Drills, "New drill", body))
 }
@@ -456,8 +467,10 @@ fn ice_size(key: &str, area: &str, lanes: &str) -> AppResult<IceSize> {
     IceSize::new(area, lanes).map_err(|e| AppError::bad_request(e.to_string()))
 }
 
-/// Read the drill form (equipment fields are `eq_<key>`).
-fn parse(pairs: &[(String, String)]) -> AppResult<DrillFields> {
+/// Read the drill form (equipment fields are `eq_<key>`, the development split
+/// `focus_<level>`). A missing or wrong split comes back as a message beside the
+/// fields, so the form can be shown again with nothing lost.
+fn parse(pairs: &[(String, String)]) -> AppResult<(DrillFields, Option<String>)> {
     let get = |k: &str| {
         pairs
             .iter()
@@ -475,7 +488,11 @@ fn parse(pairs: &[(String, String)]) -> AppResult<DrillFields> {
     }
     let diagram =
         Diagram::from_json(get("diagram")).map_err(|e| AppError::bad_request(e.to_string()))?;
-    Ok(DrillFields {
+    let (focus, focus_error) = match parse_focus(|k| get(k).to_string()) {
+        Ok(s) => (Some(s), None),
+        Err(e) => (None, Some(e)),
+    };
+    let fields = DrillFields {
         name: form::text(get("name"), "Name")?,
         ice: ice_size(get("ice"), get("area"), get("lanes"))?,
         category: form::key(get("category"), "category")?,
@@ -484,7 +501,9 @@ fn parse(pairs: &[(String, String)]) -> AppResult<DrillFields> {
         points: get("points").to_string(),
         diagram,
         equipment,
-    })
+        focus,
+    };
+    Ok((fields, focus_error))
 }
 
 /// The form again with the submitted values and what went wrong (nothing drawn is lost).
@@ -500,7 +519,7 @@ fn rejected(cx: &Ctx, r: Rejected<'_>, f: &DrillFields, error: &str) -> Response
     let body = html! {
         (heading(r.title, "", link_button(r.back, "← Drill library", false)))
         (notice("error", html! { "Not saved: " (error) }))
-        (drill_form(r.action, f, r.used, r.back, r.new_in))
+        (drill_form(r.action, f, r.used, r.back, r.new_in, &cx.url(GUIDE_PATH)))
     };
     (
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -519,9 +538,13 @@ fn field_value<'a>(pairs: &'a [(String, String)], key: &str) -> &'a str {
 
 async fn create(cx: Ctx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<Response> {
     let (lib, _) = library_param(&cx, field_value(&pairs, "lib")).await?;
-    let f = parse(&pairs)?;
+    let (f, focus_error) = parse(&pairs)?;
     let save = f.clone();
-    match cx.db(move |db| db.create_drill(lib, save)).await {
+    let result = match focus_error {
+        Some(e) => Err(anyhow::anyhow!(e)),
+        None => cx.db(move |db| db.create_drill(lib, save)).await,
+    };
+    match result {
         Ok(id) => Ok(flash::info(
             &cx.st,
             &cx.url(&format!("/drills/{id}")),
@@ -584,19 +607,30 @@ async fn edit_page(dc: DrillCtx) -> AppResult<Page> {
                 span class="muted small" { "The copy is separate: changing one never changes the other." }
             }
         }
-        (drill_form(&dc.url(&base), &d.fields(), used, &back, None))
+        @if d.focus.is_none() {
+            (notice("warn", html! {
+                "This drill doesn't say yet how its time splits across the development levels, "
+                "so practices can't count it. Set it under "
+                strong { "Development" } " and save."
+            }))
+        }
+        (drill_form(&dc.url(&base), &d.fields(), used, &back, None, &dc.url(GUIDE_PATH)))
     };
     Ok(page(&dc, Nav::Drills, &d.name, body))
 }
 
 async fn update(dc: DrillCtx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<Response> {
     let id = dc.drill.id;
-    let f = parse(&pairs)?;
+    let (f, focus_error) = parse(&pairs)?;
     let save = f.clone();
     let result = dc
         .db(move |db| {
             let used = db.drill_usage(id)?;
-            Ok((db.update_drill(id, save), used))
+            let saved = match focus_error {
+                Some(e) => Err(anyhow::anyhow!(e)),
+                None => db.update_drill(id, save),
+            };
+            Ok((saved, used))
         })
         .await?;
     match result {

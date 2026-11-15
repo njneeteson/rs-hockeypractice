@@ -42,6 +42,7 @@ async fn new_drill(app: &mut TestApp, name: &str, ice: &str) -> i64 {
                 ("description", "Pass and follow your pass."),
                 ("points", "Tape to tape\nHeads up"),
                 ("diagram", DIAGRAM),
+                ("focus_technical", "100"),
                 ("eq_pucks", "20"),
                 ("eq_cones", "4"),
                 ("eq_nets", ""),
@@ -85,6 +86,7 @@ async fn drills_are_created_edited_and_listed() {
                 ("ice", "quarter"),
                 ("minutes", "8"),
                 ("diagram", DIAGRAM),
+                ("focus_technical", "100"),
             ],
         )
         .await;
@@ -98,6 +100,7 @@ async fn drills_are_created_edited_and_listed() {
                 ("ice", "quarter"),
                 ("minutes", "500"),
                 ("diagram", DIAGRAM),
+                ("focus_technical", "100"),
             ],
         )
         .await;
@@ -430,6 +433,7 @@ async fn new_pages_render_and_stay_under_the_base_path() {
         "/drills/new?ice=zone".into(),
         "/drills/1".into(),
         "/teams".into(),
+        "/development".into(),
     ] {
         let r = app.get(&url(&path)).await;
         assert_eq!(r.status, StatusCode::OK, "{path}: {}", r.body);
@@ -438,7 +442,10 @@ async fn new_pages_render_and_stay_under_the_base_path() {
                 assert!(
                     link.starts_with("/localapp")
                         || link.starts_with('#')
-                        || link.starts_with("javascript:"),
+                        || link.starts_with("javascript:")
+                        // The development guide links to Hockey Canada's documents.
+                        || link.starts_with("https://www.hockeycanada.ca/")
+                        || link.starts_with("https://cdn.hockeycanada.ca/"),
                     "{path}: {attr} {link} escapes the base path"
                 );
             }
@@ -497,6 +504,7 @@ async fn lane_drills_and_rotated_equipment_are_saved() {
                 ("lanes", "3"),
                 ("minutes", "8"),
                 ("diagram", diagram),
+                ("focus_technical", "100"),
             ],
         )
         .await;

@@ -10,6 +10,7 @@ use crate::state::Shared;
 use crate::views::components::{
     Num, Text, badge, card, empty, heading, legend_list, link_button, notice, stat_tile, svg, thead,
 };
+use crate::views::development::{GUIDE_PATH, composition_panel, split_bar, targets_source};
 use crate::views::forms::{action_button, field};
 use crate::views::{Nav, Page, page};
 use axum::extract::{Path, Query};
@@ -550,6 +551,7 @@ fn station_list(cx: &Ctx, plan: &Plan, seg: &Segment, library: &[Drill]) -> Mark
                         div class="station-drill" {
                             a href=(cx.url(&format!("/drills/{}", d.id))) { (d.name) }
                             span class="muted small" { " · " (seg.station_minutes()) " min · " (d.category.label()) }
+                            (split_bar(d.focus))
                         }
                         details class="drill-text" data-keep={ "text-" (seg.id) "-" (p.index) } {
                             summary { "Text on the printed page" }
@@ -782,6 +784,7 @@ fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce, team: i64) -> Ma
                     li class="drill-chip" draggable="true" tabindex="0" data-drill-id=(d.id) data-size=(d.ice.key())
                         data-name=(d.name.to_lowercase()) aria-label={ (d.name) ", " (d.ice.label()) } {
                         span class="chip-name" { (d.name) }
+                        (split_bar(d.focus))
                         span class="muted small" {
                             (d.ice.label()) " · " (d.minutes) " min"
                             @if d.library.team().is_none() { " · yours" }
@@ -813,9 +816,10 @@ fn add_segment_form(cx: &Ctx, plan: &Plan) -> Markup {
 async fn show(pc: PracticeCtx) -> AppResult<Page> {
     let cx = pc.cx.clone();
     let (id, team, me) = (pc.practice.id, pc.practice.team_id, cx.member());
-    let (plan, library) = cx
-        .db(move |db| Ok((db.plan(id)?, builder_library(db, team, me)?)))
+    let (plan, library, team) = cx
+        .db(move |db| Ok((db.plan(id)?, builder_library(db, team, me)?, db.team(team)?)))
         .await?;
+    let team = team.ok_or(AppError::NotFound)?;
     let plan = plan.ok_or(AppError::NotFound)?;
     let p = &plan.practice;
     let base = format!("/practices/{id}");
@@ -844,6 +848,7 @@ async fn show(pc: PracticeCtx) -> AppResult<Page> {
             (stat_tile("Equipment", html! { (eq.iter().map(|(_, q)| q).sum::<u32>()) " items" },
                 &equipment_summary(&eq), "The most any one part needs, item by item."))
         }
+        div id="practice-focus" { (focus_card(&cx, &plan, &team)) }
         @if library.is_empty() { (empty_library_note(&cx)) }
         div class="builder" {
             // With htmx, every change in the parts (placing a drill, notes,
@@ -852,7 +857,7 @@ async fn show(pc: PracticeCtx) -> AppResult<Page> {
             // and redirect back as usual.
             div class="builder-main" id="builder-main" hx-target="#builder-main" hx-select="#builder-main"
                 hx-swap="outerHTML show:none" hx-push-url="false"
-                hx-select-oob="#practice-head,#practice-tiles,#toasts" {
+                hx-select-oob="#practice-head,#practice-tiles,#practice-focus,#toasts" {
                 @if plan.segments.is_empty() {
                     (notice("info", html! { "This practice has no parts yet. Each part is a block of time and becomes one page of the plan." }))
                 }
@@ -892,5 +897,35 @@ fn offered_name(d: &Drill) -> String {
     match d.library {
         Library::Personal(_) => format!("{} (yours)", d.name),
         Library::Team(_) => d.name.clone(),
+    }
+}
+
+/// How this practice's time splits across the development levels, per
+/// player, against the team's targets. Swapped with the builder (htmx), so it
+/// follows every drill placed or removed.
+fn focus_card(cx: &Ctx, plan: &Plan, team: &Team) -> Markup {
+    let guide = cx.url(GUIDE_PATH);
+    let targets = team.targets();
+    let source = targets_source(team.age, team.custom_targets.is_some());
+    html! {
+        details class="card focus-card" data-keep="practice-focus" open {
+            summary {
+                h2 { "Development focus" }
+                span class="muted small" {
+                    @if targets.is_some() {
+                        " compared with " (source)
+                    } @else {
+                        " · "
+                        a href=(cx.url(&format!("/teams/{}", team.id))) { "set the team's age division" }
+                        " to compare with Hockey Canada's targets"
+                    }
+                }
+            }
+            (composition_panel(&plan.composition(), targets, &guide))
+            p class="muted small" {
+                "Per player: a part's minutes are shared equally by its drills (each player does them in turn, or one of them). "
+                a href={ (guide) @if let Some(a) = team.age { "#" (a.key()) } } { "Hockey Canada's guidance" }
+            }
+        }
     }
 }

@@ -2,6 +2,7 @@
 //! its members plan practices together and share the team's drill library.
 
 use super::Database;
+use crate::development::{AgeDivision, Split};
 use crate::owner::{MemberId, TeamRole, limits};
 use crate::practice::Team;
 use rusqlite::{OptionalExtension, Row, params};
@@ -9,7 +10,8 @@ use rusqlite::{OptionalExtension, Row, params};
 const SELECT: &str = "SELECT t.id, t.name, t.notes,
     (SELECT COUNT(*) FROM practices p WHERE p.team_id = t.id),
     (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id),
-    (SELECT COUNT(*) FROM drills d WHERE d.owner_team = t.id)
+    (SELECT COUNT(*) FROM drills d WHERE d.owner_team = t.id),
+    t.age, t.targets
     FROM teams t";
 
 fn row(r: &Row<'_>) -> rusqlite::Result<Team> {
@@ -20,6 +22,10 @@ fn row(r: &Row<'_>) -> rusqlite::Result<Team> {
         practices: r.get(3)?,
         members: r.get(4)?,
         drills: r.get(5)?,
+        age: AgeDivision::from_key(&r.get::<_, String>(6)?),
+        custom_targets: r
+            .get::<_, Option<String>>(7)?
+            .and_then(|s| Split::from_key(&s)),
     })
 }
 
@@ -49,7 +55,7 @@ impl Database {
             &format!("{sql} WHERE tm.member_id = ?1 ORDER BY t.name COLLATE NOCASE, t.id"),
             [member.0],
             |r| {
-                let role: String = r.get(6)?;
+                let role: String = r.get(8)?;
                 Ok((
                     row(r)?,
                     TeamRole::from_key(&role).unwrap_or(TeamRole::Coach),
@@ -118,6 +124,26 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE teams SET name = ?2, notes = ?3 WHERE id = ?1",
             params![id, name, notes],
+        )?;
+        anyhow::ensure!(n == 1, "That team doesn't exist.");
+        Ok(())
+    }
+
+    /// Set a team's age division and, optionally, its own targets instead of
+    /// Hockey Canada's for the division.
+    pub fn set_team_development(
+        &self,
+        id: i64,
+        age: Option<AgeDivision>,
+        targets: Option<Split>,
+    ) -> anyhow::Result<()> {
+        let n = self.conn.execute(
+            "UPDATE teams SET age = ?2, targets = ?3 WHERE id = ?1",
+            params![
+                id,
+                age.map(|a| a.key()).unwrap_or_default(),
+                targets.map(|t| t.key())
+            ],
         )?;
         anyhow::ensure!(n == 1, "That team doesn't exist.");
         Ok(())

@@ -52,6 +52,16 @@ Each person sees only their own drills and the teams they belong to.
   crossovers (X's), goalie pad slide and butterfly slide, ending in an arrow,
   a stop (two bars) or nothing. *Add example drills* on an empty library adds
   a drill for each main area, a lane drill and a goalie drill.
+- **Development model** (`/development`): Hockey Canada's skill development
+  pyramid, with five levels: technical skills, individual tactics, team
+  tactics, team play and strategy. Every drill says how its time splits
+  across them (5% steps, adding to 100%; required when saving). A team has an
+  age division (U7 to U18) with Hockey Canada's targets for each level, which
+  an owner can replace with the team's own. The practice builder shows the
+  practice's split per player against the targets, live; the team page adds
+  up the season. Per player, a part's minutes are shared equally by its
+  drills (rotating through stations, or one station per group, average out
+  the same).
 - **Practices** (`/practices`): a date, optional start time, a team, and full
   or half ice. A practice is a list of **parts**. Each part has a length, a
   title, an **ice layout**, an optional rotation time and notes. The builder
@@ -170,6 +180,7 @@ duplicate it instead.
 │   │       ├── diagram.rs      a drill's drawing (JSON), how each item and line is drawn, legends
 │   │       ├── drill.rs        drills, categories, equipment
 │   │       ├── owner.rs        team members and roles, drill libraries, quotas
+│   │       ├── development.rs  Hockey Canada's levels, targets by age, a drill's split, practice composition
 │   │       ├── practice.rs     teams, practices, parts (segments), stations, Plan
 │   │       ├── board.rs        complete SVG diagrams (one drill; a practice page)
 │   │       ├── pdf.rs          the printable plan (page SVGs → PDF with krilla)
@@ -185,7 +196,7 @@ duplicate it instead.
 │       │   ├── extract.rs      Ctx, AdminCtx, and access checks: TeamCtx, PracticeCtx, SegmentCtx, DrillCtx
 │       │   ├── throttle.rs     limits on PDF and preview rendering
 │       │   ├── auth/           passwords, sessions, throttling, cross-site guard, store/ (auth.sqlite)
-│       │   ├── routes/         practices, segments, drills, teams, home, signin, account, admin/users
+│       │   ├── routes/         practices, segments, drills, teams, development (guide), home, signin, account, admin/users
 │       │   ├── views/          layout, nav, components, forms
 │       │   ├── flash.rs        one-shot toast messages after a redirect
 │       │   ├── error.rs        AppError → HTML error page

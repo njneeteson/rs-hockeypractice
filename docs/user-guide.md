@@ -14,6 +14,7 @@ three skill stations, and five puck-skill lanes with a goalie warm-up.
 - [Parts and ice layouts](#parts-and-ice-layouts)
 - [Putting drills on the ice](#putting-drills-on-the-ice)
 - [Goalie warm-up](#goalie-warm-up)
+- [Development focus](#development-focus)
 - [Printing](#printing)
 - [On a phone, and in dark mode](#on-a-phone-and-in-dark-mode)
 - [Questions](#questions)
@@ -29,6 +30,9 @@ three skill stations, and five puck-skill lanes with a goalie warm-up.
 - A **practice** is a list of **parts** (for example "Warm-up, 8 min", "Skill
   stations, 24 min"). Each part splits the ice into **stations**, and each
   station runs one drill.
+- Each drill says how its time splits across **Hockey Canada's development
+  levels**, and the app compares every practice (and the season) with the
+  targets for the team's age division.
 - The **PDF** has one page per part: the rink with every station's drill
   drawn on it, a legend, the timing and equipment, and each drill's
   instructions. One part never runs onto a second page.
@@ -38,7 +42,8 @@ Edit a team drill and every one of the team's practices that uses it updates.
 ## Teams and coaches
 
 **Teams** in the menu lists the teams you're in. **Add a team** creates one
-with you as its **owner**. On a team's page, owners add the other coaches by
+with you as its **owner**. Give it an **age division** (U7 to U18) so the
+app can compare its practices with Hockey Canada's targets. On a team's page, owners add the other coaches by
 their username (an admin creates accounts), and make each one an **owner** or
 a **coach**:
 
@@ -91,6 +96,13 @@ Click a drill to open it, or **New drill**. A drill has:
   are printed under the rink.
 - **Equipment**: how many pucks, cones, nets and so on. **Count equipment from
   the diagram** fills these in from what you drew.
+- **Development**: how the drill's time splits across the five development
+  levels (technical skills, individual tactics, team tactics, team play,
+  strategy), in 5% steps adding up to 100%. Required: a drill can't be saved
+  without it. A 2-on-1 drill might be 40 / 30 / 30 / 0 / 0. See
+  [Development focus](#development-focus).
+
+![The development split on a drill](images/18-drill-development.png)
 
 ![A drill: details, diagram, instructions and equipment](images/02-drill-page.png)
 
@@ -291,6 +303,35 @@ sits in the open strip between them, facing the end boards:
 
 ![Five lanes with a goalie warm-up between the right-hand lanes](images/09-lanes-and-goalies.png)
 
+## Development focus
+
+Hockey Canada recommends how much practice time players should spend at each
+level of its development pyramid, by age: at U7 almost all of it on technical
+skills, at U13 and older more on tactics, team play and strategy.
+**Development guide** in the menu explains the levels, lists the targets for
+every division, and links to Hockey Canada's documents.
+
+On a practice, the **Development focus** panel under the summary shows the
+share of time at each level, per player, against the team's targets. A black
+mark on each bar is the target; ▲ means above it and ▼ below it by more than
+5 points. It updates as you place and remove drills.
+
+![A practice compared with the U13 targets](images/19-practice-focus.png)
+
+How the time is counted: a part's minutes are shared equally by its drills.
+With a rotation, each player does every station in turn; without one, each
+group spends the part at one station, so on average it comes to the same.
+Parts without drills don't count, and nor do drills whose split hasn't been
+set (the panel says how many minutes those are).
+
+One practice can lean one way; it's the season that should balance out. The
+team's page adds up all its practices so far (and, below, the planned ones
+too). Owners set the team's age division there under **Age division and
+targets**, and can enter the team's own targets instead of Hockey Canada's
+if their association asks for something different.
+
+![The development guide](images/20-guide.png)
+
 ## Printing
 
 **Download PDF** at the top of a practice gives one US Letter page per part.
@@ -337,6 +378,11 @@ practice change?**
 Placing it copied it into the team's library, and the practice uses that
 copy. Change the team's copy (open it from the station), or copy yours into
 the team again and place the new copy.
+
+**Why don't my drills count on the Development focus panel?**
+Drills made before the development model don't have a split yet. Open each
+one, fill in **Development** and save; the library marks them "Development
+split not set".
 
 **A coach can't see our practices.**
 They need to be in the team: an owner adds them on the team's page, by the

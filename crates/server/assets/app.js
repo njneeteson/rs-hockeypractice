@@ -175,3 +175,28 @@ if (window.htmx) {
 } else {
   document.addEventListener("DOMContentLoaded", () => setUpToasts(document.body));
 }
+
+// The drill form's development split ([data-focus]): show the running total
+// next to it ([data-focus-total]), flagged until it makes 100%.
+function updateFocusTotal(group) {
+  const total = Array.from(group.querySelectorAll("[data-focus-part]")).reduce(
+    (sum, input) => sum + (parseInt(input.value, 10) || 0),
+    0,
+  );
+  const out = group.parentElement && group.parentElement.querySelector("[data-focus-total]");
+  if (out) {
+    out.textContent = String(total);
+    out.classList.toggle("warn-text", total !== 100);
+  }
+}
+document.addEventListener("input", (event) => {
+  const group = event.target.closest("[data-focus]");
+  if (group) {
+    updateFocusTotal(group);
+  }
+});
+function setUpFocus(root) {
+  root.querySelectorAll("[data-focus]").forEach(updateFocusTotal);
+}
+document.addEventListener("DOMContentLoaded", () => setUpFocus(document));
+document.addEventListener("htmx:load", (event) => setUpFocus(event.target));

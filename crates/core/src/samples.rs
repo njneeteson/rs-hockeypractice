@@ -1,6 +1,7 @@
 //! A few example drills to start the library with (one for each main area,
 //! plus a lane drill and a goalie drill).
 
+use crate::development::Split;
 use crate::diagram::{Diagram, Item, LineEnd, LineStyle};
 use crate::drill::{Category, DrillFields, Equipment};
 use crate::rink::{Area, IceSize};
@@ -29,6 +30,7 @@ pub fn drills() -> Vec<DrillFields> {
     vec![
         DrillFields {
             name: "Full-ice flow warm-up".into(),
+            focus: Some(Split([100, 0, 0, 0, 0])),
             ice: IceSize::FULL,
             category: Category::WarmUp,
             minutes: 6,
@@ -53,6 +55,7 @@ pub fn drills() -> Vec<DrillFields> {
         },
         DrillFields {
             name: "Pass, skate and shoot".into(),
+            focus: Some(Split([70, 15, 15, 0, 0])),
             ice: IceSize::HALF,
             category: Category::Shooting,
             minutes: 10,
@@ -79,6 +82,7 @@ pub fn drills() -> Vec<DrillFields> {
         },
         DrillFields {
             name: "1-on-1 corner battles".into(),
+            focus: Some(Split([30, 70, 0, 0, 0])),
             ice: IceSize::QUARTER,
             category: Category::Battles,
             minutes: 8,
@@ -104,6 +108,7 @@ pub fn drills() -> Vec<DrillFields> {
         },
         DrillFields {
             name: "Neutral-zone puck control weave".into(),
+            focus: Some(Split([90, 10, 0, 0, 0])),
             ice: IceSize::NEUTRAL,
             category: Category::PuckHandling,
             minutes: 8,
@@ -131,6 +136,7 @@ pub fn drills() -> Vec<DrillFields> {
         },
         DrillFields {
             name: "3-on-2 end-zone small-area game".into(),
+            focus: Some(Split([20, 40, 40, 0, 0])),
             ice: IceSize::END_ZONE,
             category: Category::SmallArea,
             minutes: 10,
@@ -160,6 +166,7 @@ pub fn drills() -> Vec<DrillFields> {
         },
         DrillFields {
             name: "Dangler and pivot lane".into(),
+            focus: Some(Split([100, 0, 0, 0, 0])),
             ice: IceSize::lane(Area::Half, 3),
             category: Category::PuckHandling,
             minutes: 8,
@@ -192,6 +199,7 @@ pub fn drills() -> Vec<DrillFields> {
         },
         DrillFields {
             name: "Goalie post-to-post slides".into(),
+            focus: Some(Split([100, 0, 0, 0, 0])),
             ice: IceSize::END_ZONE,
             category: Category::Goalies,
             minutes: 6,

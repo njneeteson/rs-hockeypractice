@@ -14,6 +14,7 @@
 
 pub mod account;
 pub mod admin;
+pub mod development;
 pub mod drills;
 pub mod home;
 pub mod practices;
@@ -69,6 +70,7 @@ fn routes(st: Shared) -> Router {
         .merge(practices::routes())
         .merge(segments::routes())
         .merge(teams::routes())
+        .merge(development::routes())
         .merge(admin::routes())
         .route_layer(from_fn_with_state(st.clone(), auth::require_login));
 

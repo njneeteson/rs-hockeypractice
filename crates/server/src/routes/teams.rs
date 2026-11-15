@@ -9,12 +9,14 @@ use crate::flash;
 use crate::form;
 use crate::state::Shared;
 use crate::views::components::{Num, Text, card, empty, heading, link_button, thead};
+use crate::views::development::{GUIDE_PATH, composition_panel, parse_targets, targets_source};
 use crate::views::forms::{action_button, field};
 use crate::views::{Nav, Page, page};
 use axum::extract::Path;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Form, Router};
+use localapp_core::development::{AgeDivision, Composition, Level};
 use localapp_core::owner::{Library, MemberId, TeamRole};
 use maud::{Markup, html};
 use serde::Deserialize;
@@ -29,6 +31,7 @@ pub fn routes() -> Router<Shared> {
         .route("/teams/{id}/members/{member}/role", post(set_role))
         .route("/teams/{id}/members/{member}/remove", post(remove_member))
         .route("/teams/{id}/leave", post(leave))
+        .route("/teams/{id}/development", post(set_development))
 }
 
 fn team_url(cx: &Ctx, id: i64) -> String {
@@ -46,11 +49,12 @@ async fn list(cx: Ctx) -> AppResult<Page> {
             } @else {
                 div class="table-wrap" {
                     table {
-                        (thead(&[("Team", Text), ("You are", Text), ("Members", Num), ("Practices", Num), ("Drills", Num)]))
+                        (thead(&[("Team", Text), ("Age", Text), ("You are", Text), ("Members", Num), ("Practices", Num), ("Drills", Num)]))
                         tbody {
                             @for (t, role) in &teams {
                                 tr {
                                     td { a href=(team_url(&cx, t.id)) { (t.name) } }
+                                    td { (t.age.map(|a| a.label()).unwrap_or("–")) }
                                     td { (role.label()) }
                                     td class="num" { (t.members) }
                                     td class="num" {
@@ -71,6 +75,7 @@ async fn list(cx: Ctx) -> AppResult<Page> {
                 (field("Name", "For example “U13 A Hawks”.", html! {
                     input type="text" name="name" required maxlength="80";
                 }))
+                (field("Age division", "Sets Hockey Canada's targets for how practice time splits across the development levels.", age_select(None)))
                 (field("Notes", "Optional: level, ice times, coaches.", html! {
                     input type="text" name="notes" maxlength="500";
                 }))
@@ -105,6 +110,15 @@ fn role_select(role: TeamRole) -> Markup {
 async fn show(tc: TeamCtx) -> AppResult<Page> {
     let id = tc.team.id;
     let members = tc.db(move |db| db.members(id)).await?;
+    let today = chrono::Local::now().date_naive();
+    let (so_far, all) = tc
+        .db(move |db| {
+            Ok((
+                db.team_composition(id, Some(today))?,
+                db.team_composition(id, None)?,
+            ))
+        })
+        .await?;
     let names = names(&tc)?;
     let owner = tc.role == TeamRole::Owner;
     let me = tc.member();
@@ -123,6 +137,7 @@ async fn show(tc: TeamCtx) -> AppResult<Page> {
             (link_button(&tc.url(&format!("/drills?lib={}", Library::Team(id).key())), "Team drills", false))
             (link_button(&tc.url("/teams"), "← Teams", false))
         }))
+        (development_card(&tc, so_far, all))
         div class="grid" {
             (card("Members", "Owners manage the team and who's in it. Everyone plans practices and edits the team's drills.", html! {
                 div class="table-wrap" {
@@ -218,11 +233,25 @@ struct TeamForm {
     name: String,
     #[serde(default)]
     notes: String,
+    /// Only on the "Add a team" form.
+    #[serde(default)]
+    age: String,
 }
 
 async fn create(cx: Ctx, Form(f): Form<TeamForm>) -> AppResult<Response> {
     let me = cx.member();
-    match cx.db(move |db| db.create_team(me, &f.name, &f.notes)).await {
+    let age = match f.age.trim() {
+        "" => None,
+        k => Some(form::key::<AgeDivision>(k, "age division")?),
+    };
+    let result = cx
+        .db(move |db| {
+            let id = db.create_team(me, &f.name, &f.notes)?;
+            db.set_team_development(id, age, None)?;
+            Ok(id)
+        })
+        .await;
+    match result {
         Ok(id) => Ok(flash::info(
             &cx.st,
             &team_url(&cx, id),
@@ -331,4 +360,123 @@ async fn leave(tc: TeamCtx) -> AppResult<Response> {
         )),
         Err(e) => Ok(flash::error(&tc.st, &team_url(&tc, id), format!("{e:#}"))),
     }
+}
+
+/// A select of the age divisions, with "not set" first.
+fn age_select(selected: Option<AgeDivision>) -> Markup {
+    html! {
+        select name="age" {
+            option value="" selected[selected.is_none()] { "Not set" }
+            @for a in AgeDivision::ALL {
+                option value=(a.key()) selected[selected == Some(*a)] {
+                    (a.label())
+                    @if !a.ages().is_empty() { " (ages " (a.ages()) ")" }
+                }
+            }
+        }
+    }
+}
+
+/// The team's development targets and how its practices measure up; owners
+/// also set the age division and, if they want, their own targets.
+fn development_card(tc: &TeamCtx, so_far: (Composition, u32), all: (Composition, u32)) -> Markup {
+    let t = &tc.team;
+    let guide = tc.url(GUIDE_PATH);
+    let targets = t.targets();
+    let custom = t.custom_targets.is_some();
+    let owner = tc.role == TeamRole::Owner;
+    let caption = match t.age {
+        Some(a) => format!(
+            "{} · compared with {}.",
+            a.label(),
+            targets_source(Some(a), custom)
+        ),
+        None if custom => "Compared with the team's own targets.".to_string(),
+        None => "No age division set, so there are no targets to compare with.".to_string(),
+    };
+    html! {
+        (card("Development", "Per player: each drill counts for its share of a part's time (the part's minutes ÷ its drills), split by its development levels.", html! {
+            p class="muted" {
+                (caption) " "
+                a href={ (guide) @if let Some(a) = t.age { "#" (a.key()) } } { "Hockey Canada's guidance" }
+            }
+            h3 { "Practices so far (" (so_far.1) ")" }
+            @if so_far.1 == 0 {
+                p class="muted small" { "None up to today yet." }
+            } @else {
+                (composition_panel(&so_far.0, targets, &guide))
+            }
+            @if all.1 > so_far.1 {
+                details class="season-all" {
+                    summary { "Including planned practices (" (all.1) ")" }
+                    (composition_panel(&all.0, targets, &guide))
+                }
+            }
+            @if owner {
+                details class="team-targets" open[t.age.is_none()] {
+                    summary { "Age division and targets" }
+                    form method="post" action=(tc.url(&format!("/teams/{}/development", t.id))) class="form-stack" {
+                        (field("Age division", "", age_select(t.age)))
+                        fieldset {
+                            legend { "Targets" }
+                            label class="check" {
+                                input type="radio" name="targets" value="hockey_canada" checked[!custom];
+                                " Hockey Canada's for the age division"
+                                @if let Some(s) = t.age.and_then(AgeDivision::hockey_canada) {
+                                    span class="muted small" { " (" (s) ")" }
+                                }
+                            }
+                            label class="check" {
+                                input type="radio" name="targets" value="custom" checked[custom];
+                                " Our own (e.g. what your association asks for):"
+                            }
+                            div class="focus-fields" {
+                                @for l in Level::ALL {
+                                    label class="field" {
+                                        span class="field-label" { span class={ "swatch lvl-" (l.key()) } {} (l.label()) }
+                                        input type="number" name={ "target_" (l.key()) } min="0" max="100" step="5"
+                                            value=[targets.map(|s| s.get(*l))] data-implies="targets=custom";
+                                    }
+                                }
+                            }
+                        }
+                        div { button type="submit" { "Save" } }
+                    }
+                }
+            }
+        }))
+    }
+}
+
+#[derive(Deserialize)]
+struct DevelopmentForm {
+    #[serde(default)]
+    age: String,
+    #[serde(default)]
+    targets: String,
+    #[serde(flatten)]
+    rest: HashMap<String, String>,
+}
+
+async fn set_development(tc: TeamOwnerCtx, Form(f): Form<DevelopmentForm>) -> AppResult<Response> {
+    let id = tc.team.id;
+    let to = team_url(&tc, id);
+    let age = match f.age.trim() {
+        "" => None,
+        k => Some(form::key::<AgeDivision>(k, "age division")?),
+    };
+    let targets = match f.targets.as_str() {
+        "custom" => match parse_targets(|k| f.rest.get(k).cloned().unwrap_or_default()) {
+            Ok(s) => Some(s),
+            Err(e) => return Ok(flash::error(&tc.st, &to, format!("Targets not saved: {e}"))),
+        },
+        _ => None,
+    };
+    let result = tc
+        .db(move |db| {
+            db.set_team_development(id, age, targets)
+                .map(|()| "Development targets saved.")
+        })
+        .await;
+    Ok(flash::report(&tc.st, &to, result))
 }

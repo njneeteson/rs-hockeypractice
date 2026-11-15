@@ -26,6 +26,12 @@
   --rink-ice: light-dark(#ffffff, #e3e8ed);
   --rink-boards: light-dark(#2b2b2b, #c9d1d9);
   --cone: #f08a24;
+  /* The development pyramid's five levels, base to top. */
+  --level-technical: light-dark(#2a6fd0, #4c8ee6);
+  --level-individual: light-dark(#0f9a8f, #2bb7aa);
+  --level-team-tactics: light-dark(#5b9e2c, #79bb45);
+  --level-team-play: light-dark(#d08a12, #e3a33a);
+  --level-strategy: light-dark(#8a4fc7, #a774dd);
 }
 
 /* The choice is on <body> (htmx swaps the body when navigating). */
@@ -1309,3 +1315,108 @@ html:not(.js) .js-only {
   border: 1px solid var(--border);
   box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
 }
+
+/* ---- Development model ---------------------------------------------------- */
+
+.lvl-technical { --lvl: var(--level-technical); }
+.lvl-individual { --lvl: var(--level-individual); }
+.lvl-team_tactics { --lvl: var(--level-team-tactics); }
+.lvl-team_play { --lvl: var(--level-team-play); }
+.lvl-strategy { --lvl: var(--level-strategy); }
+
+.swatch {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 2px;
+  margin-right: 0.35em;
+  background: var(--lvl);
+  vertical-align: baseline;
+}
+
+/* A drill's split: one thin stacked bar. */
+.split-bar {
+  display: flex;
+  height: 6px;
+  width: 100%;
+  min-width: 3rem;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.split-bar .lvl { background: var(--lvl); }
+.split-bar.unset { background: repeating-linear-gradient(45deg, var(--surface-2) 0 4px, var(--border) 4px 8px); }
+.drill-focus { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.4rem; }
+.warn-text { color: var(--warn); }
+.drill-chip .split-bar { margin-top: 0.25rem; }
+.station-drill .split-bar { max-width: 12rem; margin-top: 0.25rem; }
+
+/* Practice or season against targets. */
+.focus-card > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; cursor: pointer; }
+.focus-card > summary h2 { display: inline; margin: 0; font-size: 1.05rem; }
+.focus-panel { margin-top: 0.5rem; }
+.focus-table { width: 100%; border-collapse: collapse; }
+.focus-table th,
+.focus-table td { padding: 0.3rem 0.4rem; text-align: left; border-bottom: 1px solid var(--border); }
+.focus-table th[scope="row"] { font-weight: 500; white-space: nowrap; }
+.focus-table .num { text-align: right; white-space: nowrap; }
+.focus-table .bar-col { width: 50%; }
+.focus-table .bar-wrap { display: flex; align-items: center; gap: 0.5rem; }
+.focus-bar {
+  position: relative;
+  flex: 1;
+  height: 0.7rem;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.focus-bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--lvl); }
+.focus-bar .target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+}
+.focus-table .pct { min-width: 2.6rem; text-align: right; font-variant-numeric: tabular-nums; }
+.verdict { font-size: 0.75em; }
+.verdict.under { color: var(--warn); }
+.verdict.over { color: var(--crit); }
+.focus-row.on .pct { color: var(--good); }
+
+/* Drill form: five percentages; team targets. */
+.focus-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.5rem 0.75rem;
+}
+.team-targets fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 0.4rem; }
+.team-targets legend { font-weight: 600; margin-bottom: 0.3rem; }
+.season-all,
+.team-targets { margin-top: 0.75rem; }
+
+/* The guide. */
+.pyramid { display: flex; flex-direction: column; align-items: center; gap: 3px; margin: 1rem 0; }
+.pyramid .tier {
+  display: block;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  background: var(--lvl);
+  color: #fff;
+  text-align: center;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 45%);
+}
+.pyramid .tier:nth-child(1) { width: 40%; }
+.pyramid .tier:nth-child(2) { width: 55%; }
+.pyramid .tier:nth-child(3) { width: 70%; }
+.pyramid .tier:nth-child(4) { width: 85%; }
+.pyramid .tier:nth-child(5) { width: 100%; }
+.levels dt { font-weight: 600; margin-top: 0.75rem; scroll-margin-top: 4rem; }
+.levels dd { margin: 0.2rem 0 0 1.1rem; color: var(--text-2); }
+.targets tr { scroll-margin-top: 4rem; }
+.targets tr.mine { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.targets tr:target { outline: 2px solid var(--accent); }
+.tips li { margin-bottom: 0.4rem; }
