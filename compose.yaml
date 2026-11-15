@@ -21,6 +21,10 @@ services:
       # Cookies are HTTPS-only. Set to "false" only if you really serve the app
       # over plain HTTP (passwords then cross your network unencrypted).
       LOCALAPP_SECURE_COOKIES: "true"
+      # Behind your reverse proxy, the header it puts the client's address in,
+      # so sign-in throttling sees real clients rather than the proxy. Only
+      # when the app can't be reached except through the proxy.
+      # LOCALAPP_CLIENT_IP_HEADER: x-forwarded-for
       # Optional: create the first admin automatically instead of using the
       # setup link. Remove both lines after the first start.
       # LOCALAPP_ADMIN_USER: alice

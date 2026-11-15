@@ -1,2 +1,6 @@
 /target
 /data
+# Secrets for docker compose (e.g. the Cloudflare tunnel token).
+.env
+*.env
+!*.env.example

@@ -1,0 +1,68 @@
+# The app on the public internet through a Cloudflare Tunnel, e.g. at
+# https://practice.example.com. Nothing listens on your router: cloudflared
+# connects out to Cloudflare, which serves the name and forwards requests to
+# the app over the private Docker network. See DEPLOY.md, "Going public with
+# Cloudflare Tunnel", for the Cloudflare side and a go-live checklist.
+#
+#   cp docker/cloudflare.env.example docker/.env     # paste the tunnel token
+#   docker compose -f docker/compose.cloudflare.yaml up -d
+#   docker compose -f docker/compose.cloudflare.yaml logs app   # setup link
+#
+# In the tunnel's "Public hostname", point the name at http://app:8080.
+
+services:
+  app:
+    image: ghcr.io/njneeteson/rs-hockeypractice:latest
+    restart: unless-stopped
+    environment:
+      # Served at the root of its own hostname.
+      LOCALAPP_BASE_PATH: /
+      # HTTPS-only cookies, and HSTS (Cloudflare serves HTTPS).
+      LOCALAPP_SECURE_COOKIES: "true"
+      # Cloudflare names the real client in this header; the app only
+      # listens on the private network below, so nobody else can set it.
+      LOCALAPP_CLIENT_IP_HEADER: cf-connecting-ip
+      LOCALAPP_SESSION_DAYS: "30"
+      TZ: America/Vancouver
+    volumes:
+      - app-data:/data
+    # The container can't change its own files: only /data (the volume) and
+    # a small /tmp are writable.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    # Caps, so a flood of requests slows the app instead of the whole server.
+    cpus: "1.5"
+    mem_limit: 512m
+    pids_limit: 256
+    networks: [internal]
+    # No `ports:`: only cloudflared reaches the app.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in docker/.env}
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cpus: "0.5"
+    mem_limit: 128m
+    networks: [internal, outbound]
+    depends_on:
+      - app
+
+networks:
+  # The app's network has no route to the internet: it only needs cloudflared.
+  internal:
+    internal: true
+  # cloudflared's way out to Cloudflare.
+  outbound: {}
+
+volumes:
+  app-data:

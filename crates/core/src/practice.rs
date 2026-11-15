@@ -17,6 +17,10 @@ pub struct Team {
     pub notes: String,
     /// Number of practices for this team.
     pub practices: u32,
+    /// Number of people in the team.
+    pub members: u32,
+    /// Number of drills in the team's library.
+    pub drills: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]

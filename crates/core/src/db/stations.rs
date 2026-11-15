@@ -1,8 +1,9 @@
 //! The `stations` table: which drill runs in which slot of a segment.
 
 use super::Database;
+use crate::owner::Library;
 use crate::practice::Station;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 impl Database {
     pub(super) fn stations(&self, segment_id: i64) -> anyhow::Result<Vec<Station>> {
@@ -20,8 +21,58 @@ impl Database {
         )
     }
 
-    /// Put a drill in a slot (replacing what was there). The drill's ice size
-    /// must match the slot's. The note is kept; a flip is kept only for the
+    /// The practice's team owning a segment (`None` if it doesn't exist).
+    pub fn segment_team(&self, segment_id: i64) -> anyhow::Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT p.team_id FROM segments s JOIN practices p ON p.id = s.practice_id
+                 WHERE s.id = ?1",
+                [segment_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The team's own version of a drill: the drill itself if it's in the
+    /// team's library, else the team's copy of it, made now if there isn't
+    /// one yet. The caller has checked the drill may be used at all.
+    pub fn team_drill_for(&self, drill_id: i64, team: i64) -> anyhow::Result<i64> {
+        let d = self
+            .drill(drill_id)?
+            .ok_or_else(|| anyhow::anyhow!("That drill doesn't exist."))?;
+        if d.library == Library::Team(team) {
+            return Ok(d.id);
+        }
+        match self.team_copy_of(d.id, team)? {
+            Some(copy) => Ok(copy),
+            None => self.copy_drill(d.id, Library::Team(team)),
+        }
+    }
+
+    /// Put a drill from any library the member may use in a slot. A drill
+    /// that isn't the team's own is copied into the team's library first (or
+    /// its earlier copy is used), so later edits to the original never change
+    /// this practice. Returns the drill that was placed.
+    pub fn place_drill(
+        &self,
+        segment_id: i64,
+        slot: usize,
+        drill_id: i64,
+        note: &str,
+    ) -> anyhow::Result<i64> {
+        let team = self
+            .segment_team(segment_id)?
+            .ok_or_else(|| anyhow::anyhow!("That page doesn't exist."))?;
+        self.atomic(|| {
+            let placed = self.team_drill_for(drill_id, team)?;
+            self.set_station(segment_id, slot, placed, note)?;
+            Ok(placed)
+        })
+    }
+
+    /// Put one of the team's drills in a slot (replacing what was there). The
+    /// drill must fit the slot. The note is kept; a flip is kept only for the
     /// same drill.
     pub fn set_station(
         &self,
@@ -40,6 +91,12 @@ impl Database {
         let d = self
             .drill(drill_id)?
             .ok_or_else(|| anyhow::anyhow!("That drill doesn't exist."))?;
+        let team = self.segment_team(segment_id)?;
+        anyhow::ensure!(
+            team.is_some_and(|t| d.library == Library::Team(t)),
+            "“{}” isn't in this team's drill library.",
+            d.name
+        );
         anyhow::ensure!(
             d.ice.fits_in(s.size),
             "“{}” is a {} drill; it doesn't fit in the {} ({}).",
@@ -105,7 +162,7 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::drills::tests::sample;
-    use crate::db::practices::tests::practice;
+    use crate::db::practices::tests::{practice, team_lib};
     use crate::practice::SegmentFields;
     use crate::rink::{End, IceSize, Layout, PracticeIce};
     const QUARTERS: End = End {
@@ -129,9 +186,11 @@ mod tests {
                 },
             )
             .unwrap();
-        let half = db.create_drill(sample("Half", IceSize::HALF)).unwrap();
+        let half = db
+            .create_drill(team_lib(&db), sample("Half", IceSize::HALF))
+            .unwrap();
         let quarter = db
-            .create_drill(sample("Quarter", IceSize::QUARTER))
+            .create_drill(team_lib(&db), sample("Quarter", IceSize::QUARTER))
             .unwrap();
         assert!(db.set_station(seg, 0, half, "").is_err());
         assert!(db.set_station(seg, 5, quarter, "").is_err());
@@ -164,7 +223,9 @@ mod tests {
             db.stations(seg).unwrap()[0].flip,
             "same drill keeps its flip"
         );
-        let other = db.create_drill(sample("Other", IceSize::QUARTER)).unwrap();
+        let other = db
+            .create_drill(team_lib(&db), sample("Other", IceSize::QUARTER))
+            .unwrap();
         db.set_station(seg, 1, other, "").unwrap();
         assert!(!db.stations(seg).unwrap()[0].flip);
         assert!(db.set_station_flip(seg, 3, true).is_err());
@@ -172,5 +233,78 @@ mod tests {
         db.clear_station(seg, 1).unwrap();
         assert!(db.stations(seg).unwrap().is_empty());
         assert!(db.set_station_note(seg, 1, "x").is_err());
+    }
+
+    #[test]
+    fn practices_use_their_teams_drills() {
+        use crate::db::drills::tests::ME;
+        use crate::owner::Library;
+        let db = Database::in_memory().unwrap();
+        let p = practice(&db, PracticeIce::Half);
+        let team = team_lib(&db).team().unwrap();
+        let seg = db
+            .add_segment(
+                p,
+                SegmentFields {
+                    title: String::new(),
+                    minutes: 10,
+                    layout: Layout::Half(QUARTERS),
+                    rotation: None,
+                    notes: String::new(),
+                },
+            )
+            .unwrap();
+        let mine = db
+            .create_drill(Library::Personal(ME), sample("Mine", IceSize::QUARTER))
+            .unwrap();
+        assert!(
+            db.set_station(seg, 0, mine, "").is_err(),
+            "only the team's own drills go on its pages"
+        );
+
+        // Placing a personal drill copies it into the team, once.
+        let placed = db.place_drill(seg, 0, mine, "").unwrap();
+        assert_ne!(placed, mine);
+        let copy = db.drill(placed).unwrap().unwrap();
+        assert_eq!(
+            (copy.library, copy.copied_from),
+            (Library::Team(team), Some(mine))
+        );
+        assert_eq!(db.place_drill(seg, 1, mine, "").unwrap(), placed);
+        assert_eq!(db.place_drill(seg, 1, placed, "").unwrap(), placed);
+
+        // Editing the original doesn't change the practice.
+        db.update_drill(mine, sample("Mine, changed", IceSize::QUARTER))
+            .unwrap();
+        let plan = db.plan(p).unwrap().unwrap();
+        assert_eq!(plan.drills[&placed].name, "Mine");
+
+        // Moving the practice to another team copies its drills there.
+        let other = db.create_team(ME, "U15", "").unwrap();
+        let mut f = crate::practice::PracticeFields {
+            team_id: other,
+            title: String::new(),
+            date: plan.practice.date,
+            start: None,
+            ice: PracticeIce::Half,
+            notes: String::new(),
+        };
+        db.update_practice(p, f.clone()).unwrap();
+        let plan = db.plan(p).unwrap().unwrap();
+        assert!(
+            plan.drills
+                .values()
+                .all(|d| d.library == Library::Team(other))
+        );
+        assert_eq!(plan.segments[0].stations.len(), 2);
+        // A failed placement leaves nothing behind (no stray copy).
+        let before = db.drill_count(Library::Team(other)).unwrap();
+        let half = db
+            .create_drill(Library::Personal(ME), sample("Half", IceSize::HALF))
+            .unwrap();
+        assert!(db.place_drill(seg, 2, half, "").is_err(), "too big");
+        assert_eq!(db.drill_count(Library::Team(other)).unwrap(), before);
+        f.team_id = 999;
+        assert!(db.update_practice(p, f).is_err());
     }
 }

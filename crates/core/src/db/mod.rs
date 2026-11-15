@@ -4,6 +4,7 @@
 //! is versioned with `PRAGMA user_version` (see `schema.rs`). Give each table
 //! its own submodule that adds methods to [`Database`], like `settings.rs`.
 
+mod adopt;
 mod drill_equipment;
 pub mod drills;
 pub mod practices;
@@ -11,8 +12,10 @@ mod schema;
 mod segments;
 mod settings;
 mod stations;
+mod team_members;
 mod teams;
 
+pub use adopt::Adopted;
 pub use drills::DrillFilter;
 pub use practices::PracticeSummary;
 
@@ -66,6 +69,26 @@ impl Database {
             .execute("VACUUM INTO ?1", [dest.to_string_lossy()])
             .context("writing backup")?;
         Ok(())
+    }
+
+    /// Run `f` all or nothing. Unlike a transaction this nests: called inside
+    /// another `atomic` (or a transaction), it becomes part of it (it's an
+    /// SQLite savepoint). Copying a drill, for example, happens on its own and
+    /// as part of placing one.
+    fn atomic<T>(&self, f: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+        self.conn.execute_batch("SAVEPOINT atomic")?;
+        match f() {
+            Ok(v) => {
+                self.conn.execute_batch("RELEASE atomic")?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = self
+                    .conn
+                    .execute_batch("ROLLBACK TO atomic; RELEASE atomic");
+                Err(e)
+            }
+        }
     }
 
     /// Run a query and collect every row.

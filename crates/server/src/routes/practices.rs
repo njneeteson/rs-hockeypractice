@@ -2,7 +2,7 @@
 //! ice) and the PDF download.
 
 use crate::error::{AppError, AppResult};
-use crate::extract::Ctx;
+use crate::extract::{Ctx, PracticeCtx};
 use crate::flash;
 use crate::form;
 use crate::routes::drills::empty_library_note;
@@ -21,8 +21,9 @@ use chrono::{Local, NaiveDate, NaiveTime};
 use localapp_core::board;
 use localapp_core::db::{DrillFilter, PracticeSummary};
 use localapp_core::drill::{Drill, equipment_summary};
+use localapp_core::owner::{Library, MemberId};
 use localapp_core::practice::{
-    GOALIE_WARMUP, GoalieWarmup, PlacedSlot, Plan, PracticeFields, Segment,
+    GOALIE_WARMUP, GoalieWarmup, PlacedSlot, Plan, PracticeFields, Segment, Team,
 };
 use localapp_core::rink::{End, IceSize, Layout, MAX_LANES, PracticeIce};
 use maud::{Markup, html};
@@ -82,7 +83,10 @@ pub fn practice_table(cx: &Ctx, items: &[PracticeSummary]) -> Markup {
 
 async fn list(cx: Ctx, Query(q): Query<ListQuery>) -> AppResult<Page> {
     let team = q.team.as_deref().and_then(form::opt_id);
-    let (mut all, teams) = cx.db(|db| Ok((db.practices()?, db.teams()?))).await?;
+    let me = cx.member();
+    let (mut all, teams) = cx
+        .db(move |db| Ok((db.practices_for(me)?, my_teams(db, me)?)))
+        .await?;
     if let Some(t) = team {
         all.retain(|s| s.practice.team_id == t);
     }
@@ -164,11 +168,34 @@ impl PracticeForm {
     }
 }
 
+/// The teams a member belongs to.
+fn my_teams(db: &localapp_core::db::Database, me: MemberId) -> anyhow::Result<Vec<Team>> {
+    Ok(db.teams_for(me)?.into_iter().map(|(t, _)| t).collect())
+}
+
+/// The practice's team: one of the member's, or a new one they own.
+fn resolve_team(
+    db: &localapp_core::db::Database,
+    me: MemberId,
+    fields: &mut PracticeFields,
+    new_team: &str,
+) -> anyhow::Result<()> {
+    if fields.team_id == 0 {
+        fields.team_id = db.create_team(me, new_team, "")?;
+    } else {
+        anyhow::ensure!(
+            db.member_role(fields.team_id, me)?.is_some(),
+            "Choose one of your teams."
+        );
+    }
+    Ok(())
+}
+
 fn details_form(
     cx: &Ctx,
     action: &str,
     p: Option<&localapp_core::practice::Practice>,
-    teams: &[localapp_core::practice::Team],
+    teams: &[Team],
 ) -> Markup {
     let today = Local::now().date_naive();
     let date = p.map(|p| p.date).unwrap_or(today);
@@ -220,7 +247,8 @@ fn details_form(
 }
 
 async fn new_page(cx: Ctx) -> AppResult<Page> {
-    let teams = cx.db(|db| db.teams()).await?;
+    let me = cx.member();
+    let teams = cx.db(move |db| my_teams(db, me)).await?;
     let body = html! {
         (heading("New practice", "Set the date and ice, then add parts and drop drills onto the rink.", html! {}))
         (card("", "", details_form(&cx, &cx.url("/practices"), None, &teams)))
@@ -231,11 +259,10 @@ async fn new_page(cx: Ctx) -> AppResult<Page> {
 async fn create(cx: Ctx, Form(f): Form<PracticeForm>) -> AppResult<Response> {
     let mut fields = f.fields()?;
     let new_team = f.new_team.clone();
+    let me = cx.member();
     let result = cx
         .db(move |db| {
-            if fields.team_id == 0 {
-                fields.team_id = db.create_team(&new_team, "")?;
-            }
+            resolve_team(db, me, &mut fields, &new_team)?;
             db.create_practice(fields)
         })
         .await;
@@ -253,15 +280,17 @@ async fn create(cx: Ctx, Form(f): Form<PracticeForm>) -> AppResult<Response> {
     }
 }
 
-async fn edit_page(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
-    let (p, teams) = cx.db(move |db| Ok((db.practice(id)?, db.teams()?))).await?;
-    let p = p.ok_or(AppError::NotFound)?;
+async fn edit_page(pc: PracticeCtx) -> AppResult<Page> {
+    let cx = &pc.cx;
+    let p = &pc.practice;
+    let (id, me) = (p.id, cx.member());
+    let teams = cx.db(move |db| my_teams(db, me)).await?;
     let base = format!("/practices/{id}");
     let tomorrow = (p.date + chrono::Duration::days(7)).to_string();
     let body = html! {
         (heading(&format!("Edit {}", p.display_title()), "", link_button(&cx.url(&base), "← Back to the plan", false)))
         div class="grid" {
-            (card("Details", "", details_form(&cx, &cx.url(&base), Some(&p), &teams)))
+            (card("Details", "", details_form(cx, &cx.url(&base), Some(p), &teams)))
             div class="stack" {
                 (card("Copy this practice", "Copies every part and drill to a new date.", html! {
                     form method="post" action=(cx.url(&format!("{base}/duplicate"))) class="form-grid" {
@@ -270,24 +299,24 @@ async fn edit_page(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
                     }
                 }))
                 (card("Delete", "", html! {
-                    p { "Deletes the practice and its pages. The drills stay in the library." }
+                    p { "Deletes the practice and its pages. The drills stay in the team's library." }
                     (action_button(&cx.url(&format!("{base}/delete")), "Delete practice", "danger",
                         Some("Delete this practice? This can't be undone.")))
                 }))
             }
         }
     };
-    Ok(page(&cx, Nav::Practices, "Edit practice", body))
+    Ok(page(cx, Nav::Practices, "Edit practice", body))
 }
 
-async fn update(cx: Ctx, Path(id): Path<i64>, Form(f): Form<PracticeForm>) -> AppResult<Response> {
+async fn update(pc: PracticeCtx, Form(f): Form<PracticeForm>) -> AppResult<Response> {
+    let cx = &pc.cx;
+    let (id, me) = (pc.practice.id, cx.member());
     let mut fields = f.fields()?;
     let new_team = f.new_team.clone();
     let result = cx
         .db(move |db| {
-            if fields.team_id == 0 {
-                fields.team_id = db.create_team(&new_team, "")?;
-            }
+            resolve_team(db, me, &mut fields, &new_team)?;
             db.update_practice(id, fields)
         })
         .await
@@ -302,7 +331,8 @@ async fn update(cx: Ctx, Path(id): Path<i64>, Form(f): Form<PracticeForm>) -> Ap
     ))
 }
 
-async fn delete(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
+async fn delete(pc: PracticeCtx) -> AppResult<Response> {
+    let (cx, id) = (&pc.cx, pc.practice.id);
     match cx.db(move |db| db.delete_practice(id)).await {
         Ok(()) => Ok(flash::info(
             &cx.st,
@@ -322,11 +352,8 @@ struct DuplicateForm {
     date: String,
 }
 
-async fn duplicate(
-    cx: Ctx,
-    Path(id): Path<i64>,
-    Form(f): Form<DuplicateForm>,
-) -> AppResult<Response> {
+async fn duplicate(pc: PracticeCtx, Form(f): Form<DuplicateForm>) -> AppResult<Response> {
+    let (cx, id) = (&pc.cx, pc.practice.id);
     let date = parse_date(&f.date)?;
     match cx.db(move |db| db.duplicate_practice(id, date)).await {
         Ok(new) => Ok(flash::info(
@@ -367,7 +394,8 @@ fn file_name(plan: &Plan) -> String {
     format!("{slug}.pdf")
 }
 
-async fn pdf(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
+async fn pdf(pc: PracticeCtx) -> AppResult<Response> {
+    let (cx, id) = (&pc.cx, pc.practice.id);
     let plan = cx
         .db(move |db| db.plan(id))
         .await?
@@ -380,6 +408,7 @@ async fn pdf(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
         ));
     }
     let name = file_name(&plan);
+    let _slot = cx.st.render_permit(cx.user.id).await?;
     let bytes = tokio::task::spawn_blocking(move || localapp_core::pdf::render(&plan)).await??;
     let mut resp = bytes.into_response();
     let h = resp.headers_mut();
@@ -394,7 +423,8 @@ async fn pdf(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
 }
 
 /// One part's printed page as an SVG image (see `pdf::page_preview`).
-async fn preview(cx: Ctx, Path((id, sid)): Path<(i64, i64)>) -> AppResult<Response> {
+async fn preview(pc: PracticeCtx, Path((_, sid)): Path<(i64, i64)>) -> AppResult<Response> {
+    let (cx, id) = (&pc.cx, pc.practice.id);
     let plan = cx
         .db(move |db| db.plan(id))
         .await?
@@ -404,6 +434,7 @@ async fn preview(cx: Ctx, Path((id, sid)): Path<(i64, i64)>) -> AppResult<Respon
         .iter()
         .position(|s| s.id == sid)
         .ok_or(AppError::NotFound)?;
+    let _slot = cx.st.render_permit(cx.user.id).await?;
     let svg =
         tokio::task::spawn_blocking(move || localapp_core::pdf::page_preview(&plan, i)).await??;
     let mut resp = svg.into_response();
@@ -578,7 +609,7 @@ fn drill_select(cx: &Ctx, action: &str, library: &[Drill], p: &PlacedSlot) -> Ma
                 @for (size, ds) in &groups {
                     optgroup label=(size.label()) {
                         @for d in ds {
-                            option value=(d.id) selected[p.drill.is_some_and(|x| x.id == d.id)] { (d.name) }
+                            option value=(d.id) selected[p.drill.is_some_and(|x| x.id == d.id)] { (offered_name(d)) }
                         }
                     }
                 }
@@ -721,13 +752,16 @@ fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
     }
 }
 
-fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce) -> Markup {
+fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce, team: i64) -> Markup {
     let usable: Vec<&Drill> = library.iter().filter(|d| d.ice.fits(ice)).collect();
     html! {
         aside class="library card" data-library aria-label="Drill library" {
             h2 { "Drills" }
             p class="muted small js-only" {
                 "Drag a drill onto a station it fits on the rink (they light up), or click a drill and then a station."
+            }
+            p class="muted small" {
+                "The team's drills, then yours: placing one of yours copies it into the team's library."
             }
             div class="library-filters" {
                 input type="search" data-library-search placeholder="Filter drills" aria-label="Filter drills";
@@ -748,11 +782,14 @@ fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce) -> Markup {
                     li class="drill-chip" draggable="true" tabindex="0" data-drill-id=(d.id) data-size=(d.ice.key())
                         data-name=(d.name.to_lowercase()) aria-label={ (d.name) ", " (d.ice.label()) } {
                         span class="chip-name" { (d.name) }
-                        span class="muted small" { (d.ice.label()) " · " (d.minutes) " min" }
+                        span class="muted small" {
+                            (d.ice.label()) " · " (d.minutes) " min"
+                            @if d.library.team().is_none() { " · yours" }
+                        }
                     }
                 }
             }
-            a class="small" href=(cx.url("/drills/new")) { "+ New drill" }
+            a class="small" href=(cx.url(&format!("/drills/new?lib={}", Library::Team(team).key()))) { "+ New team drill" }
         }
     }
 }
@@ -773,9 +810,11 @@ fn add_segment_form(cx: &Ctx, plan: &Plan) -> Markup {
     }
 }
 
-async fn show(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
+async fn show(pc: PracticeCtx) -> AppResult<Page> {
+    let cx = pc.cx.clone();
+    let (id, team, me) = (pc.practice.id, pc.practice.team_id, cx.member());
     let (plan, library) = cx
-        .db(move |db| Ok((db.plan(id)?, db.drills(&DrillFilter::default())?)))
+        .db(move |db| Ok((db.plan(id)?, builder_library(db, team, me)?)))
         .await?;
     let plan = plan.ok_or(AppError::NotFound)?;
     let p = &plan.practice;
@@ -822,8 +861,36 @@ async fn show(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
                 }
                 (card("Add a part", "Each part is a block of time with its own page and rink diagram.", add_segment_form(&cx, &plan)))
             }
-            (library_panel(&cx, &library, p.ice))
+            (library_panel(&cx, &library, p.ice, p.team_id))
         }
     };
     Ok(page(&cx, Nav::Practices, p.display_title(), body))
+}
+
+/// The drills the builder offers: the team's, then the user's own (placing
+/// one copies it into the team's library). Own drills the team already has a
+/// copy of are left out, so each shows once.
+fn builder_library(
+    db: &localapp_core::db::Database,
+    team: i64,
+    me: MemberId,
+) -> anyhow::Result<Vec<Drill>> {
+    let all = DrillFilter::default();
+    let mut drills = db.drills(&all, Library::Team(team))?;
+    let copied: std::collections::HashSet<i64> =
+        drills.iter().filter_map(|d| d.copied_from).collect();
+    drills.extend(
+        db.drills(&all, Library::Personal(me))?
+            .into_iter()
+            .filter(|d| !copied.contains(&d.id)),
+    );
+    Ok(drills)
+}
+
+/// A drill's name in the builder, marking the user's own (not yet the team's).
+fn offered_name(d: &Drill) -> String {
+    match d.library {
+        Library::Personal(_) => format!("{} (yours)", d.name),
+        Library::Team(_) => d.name.clone(),
+    }
 }

@@ -1,6 +1,7 @@
 //! The `practices` table: one row per practice plan.
 
 use super::Database;
+use crate::owner::{MemberId, limits};
 use crate::practice::{Plan, Practice, PracticeFields};
 use crate::rink::{Layout, PracticeIce};
 use chrono::{NaiveDate, NaiveTime};
@@ -47,11 +48,14 @@ fn start_text(t: Option<NaiveTime>) -> String {
 }
 
 impl Database {
-    /// Every practice, newest date first.
-    pub fn practices(&self) -> anyhow::Result<Vec<PracticeSummary>> {
+    /// The practices of every team a member belongs to, newest date first.
+    pub fn practices_for(&self, member: MemberId) -> anyhow::Result<Vec<PracticeSummary>> {
         self.query_all(
-            &format!("{SELECT} ORDER BY p.date DESC, p.start_time DESC, p.id DESC"),
-            [],
+            &format!(
+                "{SELECT} WHERE p.team_id IN (SELECT team_id FROM team_members WHERE member_id = ?1)
+                 ORDER BY p.date DESC, p.start_time DESC, p.id DESC"
+            ),
+            [member.0],
             row,
         )
     }
@@ -66,9 +70,14 @@ impl Database {
 
     pub fn create_practice(&self, f: PracticeFields) -> anyhow::Result<i64> {
         let f = f.validate()?;
+        let team = self
+            .team(f.team_id)?
+            .ok_or_else(|| anyhow::anyhow!("Choose a team for the practice."))?;
         anyhow::ensure!(
-            self.team(f.team_id)?.is_some(),
-            "Choose a team for the practice."
+            team.practices < limits::PRACTICES_PER_TEAM,
+            "{} has {} practices, the most a team can have. Delete old ones first.",
+            team.name,
+            team.practices
         );
         self.conn.execute(
             "INSERT INTO practices (team_id, title, date, start_time, ice, notes)
@@ -87,14 +96,31 @@ impl Database {
 
     /// Save a practice's details. Changing between full and half ice resets
     /// the pages whose layout doesn't fit; returns how many were reset.
+    /// Moving it to another team copies its drills into that team's library
+    /// (practices only use their own team's drills).
     pub fn update_practice(&self, id: i64, f: PracticeFields) -> anyhow::Result<usize> {
         let f = f.validate()?;
         anyhow::ensure!(
             self.team(f.team_id)?.is_some(),
             "Choose a team for the practice."
         );
-        let tx = self.conn.unchecked_transaction()?;
-        let n = tx.execute(
+        let before = self
+            .practice(id)?
+            .ok_or_else(|| anyhow::anyhow!("That practice doesn't exist."))?;
+        self.atomic(|| {
+            let tx = &self.conn;
+            if before.team_id != f.team_id {
+                for seg in self.segments(id)? {
+                    for st in &seg.stations {
+                        let d = self.team_drill_for(st.drill_id, f.team_id)?;
+                        tx.execute(
+                            "UPDATE stations SET drill_id = ?3 WHERE segment_id = ?1 AND slot = ?2",
+                            params![seg.id, st.slot, d],
+                        )?;
+                    }
+                }
+            }
+            let n = tx.execute(
             "UPDATE practices SET team_id = ?2, title = ?3, date = ?4, start_time = ?5, ice = ?6,
                 notes = ?7, updated_at = datetime('now')
              WHERE id = ?1",
@@ -108,22 +134,22 @@ impl Database {
                 f.notes
             ],
         )?;
-        anyhow::ensure!(n == 1, "That practice doesn't exist.");
-        let mut reset = 0;
-        for seg in self.segments(id)? {
-            if seg.layout.ice() != f.ice {
-                tx.execute("DELETE FROM stations WHERE segment_id = ?1", [seg.id])?;
-                tx.execute(
-                    "UPDATE segments SET layout = ?2,
+            anyhow::ensure!(n == 1, "That practice doesn't exist.");
+            let mut reset = 0;
+            for seg in self.segments(id)? {
+                if seg.layout.ice() != f.ice {
+                    tx.execute("DELETE FROM stations WHERE segment_id = ?1", [seg.id])?;
+                    tx.execute(
+                        "UPDATE segments SET layout = ?2,
                         goalie_x = NULL, goalie_y = NULL, goalie_rot = NULL
                      WHERE id = ?1",
-                    params![seg.id, Layout::default_for(f.ice).key()],
-                )?;
-                reset += 1;
+                        params![seg.id, Layout::default_for(f.ice).key()],
+                    )?;
+                    reset += 1;
+                }
             }
-        }
-        tx.commit()?;
-        Ok(reset)
+            Ok(reset)
+        })
     }
 
     pub(super) fn touch_practice(&self, id: i64) -> anyhow::Result<()> {
@@ -188,9 +214,20 @@ impl Database {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::db::drills::tests::ME;
+
+    /// The library of the test team ([`practice`] makes it).
+    pub fn team_lib(db: &Database) -> crate::owner::Library {
+        crate::owner::Library::Team(db.teams_for(ME).unwrap()[0].0.id)
+    }
 
     pub fn practice(db: &Database, ice: PracticeIce) -> i64 {
-        let team = db.create_team("U13", "").unwrap();
+        let team = db
+            .teams_for(ME)
+            .unwrap()
+            .first()
+            .map(|(t, _)| t.id)
+            .unwrap_or_else(|| db.create_team(ME, "U13", "").unwrap());
         db.create_practice(PracticeFields {
             team_id: team,
             title: "Tuesday".into(),
@@ -209,7 +246,8 @@ pub(crate) mod tests {
         let p = db.practice(id).unwrap().unwrap();
         assert_eq!(p.team_name, "U13");
         assert_eq!(p.start, NaiveTime::from_hms_opt(17, 30, 0));
-        assert_eq!(db.practices().unwrap().len(), 1);
+        assert_eq!(db.practices_for(ME).unwrap().len(), 1);
+        assert!(db.practices_for(MemberId(2)).unwrap().is_empty());
         assert!(
             db.delete_team(p.team_id).is_err(),
             "teams with practices stay"

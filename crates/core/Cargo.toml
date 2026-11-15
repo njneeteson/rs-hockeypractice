@@ -2,6 +2,7 @@
 name = "localapp-core"
 description = "LocalApp core: domain logic and SQLite storage, with no HTTP and no users"
 version.workspace = true
+publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

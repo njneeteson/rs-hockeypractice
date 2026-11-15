@@ -885,7 +885,7 @@ mod tests {
     use super::*;
     use crate::db::Database;
     use crate::db::drills::tests::sample;
-    use crate::db::practices::tests::practice;
+    use crate::db::practices::tests::{practice, team_lib};
     use crate::practice::SegmentFields;
     use crate::rink::{End, IceSize, Layout, PracticeIce};
     const QUARTERS: End = End {
@@ -925,7 +925,7 @@ mod tests {
         for slot in 0..4 {
             let mut f = sample(&format!("Drill {slot}"), IceSize::QUARTER);
             f.description = paragraph.into();
-            let d = db.create_drill(f).unwrap();
+            let d = db.create_drill(team_lib(&db), f).unwrap();
             db.set_station(seg, slot, d, "").unwrap();
         }
         db.add_segment(

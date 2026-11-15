@@ -2,7 +2,7 @@
 //! Every action redirects back to the practice builder, at the changed part.
 
 use crate::error::{AppError, AppResult};
-use crate::extract::Ctx;
+use crate::extract::{Ctx, PracticeCtx, SegmentCtx};
 use crate::flash;
 use crate::form;
 use crate::state::Shared;
@@ -90,35 +90,25 @@ fn builder(cx: &Ctx, practice_id: i64, segment_id: Option<i64>) -> String {
     }
 }
 
-/// The practice a segment belongs to (404 if the segment doesn't exist).
-async fn practice_of(cx: &Ctx, sid: i64) -> AppResult<i64> {
-    cx.db(move |db| db.segment(sid))
-        .await?
-        .map(|s| s.practice_id)
-        .ok_or(AppError::NotFound)
-}
-
-async fn add(cx: Ctx, Path(id): Path<i64>, Form(f): Form<SegmentForm>) -> AppResult<Response> {
+async fn add(pc: PracticeCtx, Form(f): Form<SegmentForm>) -> AppResult<Response> {
+    let (cx, id) = (&pc.cx, pc.practice.id);
     let fields = f.fields()?;
-    cx.db(move |db| db.practice(id))
-        .await?
-        .ok_or(AppError::NotFound)?;
     match cx.db(move |db| db.add_segment(id, fields)).await {
         Ok(sid) => Ok(flash::info(
             &cx.st,
-            &builder(&cx, id, Some(sid)),
+            &builder(cx, id, Some(sid)),
             "Part added.",
         )),
         Err(e) => Ok(flash::error(
             &cx.st,
-            &builder(&cx, id, None),
+            &builder(cx, id, None),
             format!("{e:#}"),
         )),
     }
 }
 
-async fn update(cx: Ctx, Path(sid): Path<i64>, Form(f): Form<SegmentForm>) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
+async fn update(sc: SegmentCtx, Form(f): Form<SegmentForm>) -> AppResult<Response> {
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let fields = f.fields()?;
     let result =
         cx.db(move |db| db.update_segment(sid, fields))
@@ -129,7 +119,7 @@ async fn update(cx: Ctx, Path(sid): Path<i64>, Form(f): Form<SegmentForm>) -> Ap
                     format!("Part saved. {n} drill(s) didn't fit the new layout and were removed.")
                 }
             });
-    Ok(flash::report(&cx.st, &builder(&cx, pid, Some(sid)), result))
+    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
 }
 
 #[derive(Deserialize)]
@@ -137,12 +127,8 @@ struct MoveForm {
     dir: String,
 }
 
-async fn move_segment(
-    cx: Ctx,
-    Path(sid): Path<i64>,
-    Form(f): Form<MoveForm>,
-) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
+async fn move_segment(sc: SegmentCtx, Form(f): Form<MoveForm>) -> AppResult<Response> {
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let up = match f.dir.as_str() {
         "up" => true,
         "down" => false,
@@ -155,31 +141,31 @@ async fn move_segment(
     let result = cx
         .db(move |db| db.move_segment(sid, up).map(|()| "Part moved."))
         .await;
-    Ok(flash::report(&cx.st, &builder(&cx, pid, Some(sid)), result))
+    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
 }
 
-async fn duplicate(cx: Ctx, Path(sid): Path<i64>) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
+async fn duplicate(sc: SegmentCtx) -> AppResult<Response> {
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     match cx.db(move |db| db.duplicate_segment(sid)).await {
         Ok(new) => Ok(flash::info(
             &cx.st,
-            &builder(&cx, pid, Some(new)),
+            &builder(cx, pid, Some(new)),
             "Part copied.",
         )),
         Err(e) => Ok(flash::error(
             &cx.st,
-            &builder(&cx, pid, Some(sid)),
+            &builder(cx, pid, Some(sid)),
             format!("{e:#}"),
         )),
     }
 }
 
-async fn delete(cx: Ctx, Path(sid): Path<i64>) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
+async fn delete(sc: SegmentCtx) -> AppResult<Response> {
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let result = cx
         .db(move |db| db.delete_segment(sid).map(|()| "Part deleted."))
         .await;
-    Ok(flash::report(&cx.st, &builder(&cx, pid, None), result))
+    Ok(flash::report(&cx.st, &builder(cx, pid, None), result))
 }
 
 #[derive(Deserialize)]
@@ -190,19 +176,26 @@ struct PlaceForm {
 }
 
 async fn place(
-    cx: Ctx,
-    Path((sid, slot)): Path<(i64, usize)>,
+    sc: SegmentCtx,
+    Path((_, slot)): Path<(i64, usize)>,
     Form(f): Form<PlaceForm>,
 ) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
-    let to = builder(&cx, pid, Some(sid));
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
+    let me = cx.member();
+    let to = builder(cx, pid, Some(sid));
     let Some(drill_id) = form::opt_id(&f.drill_id) else {
         return Ok(flash::error(&cx.st, &to, "Choose a drill first."));
     };
     let result = cx
         .db(move |db| {
-            db.set_station(sid, slot, drill_id, &f.note)?;
-            let name = db.drill(drill_id)?.map(|d| d.name).unwrap_or_default();
+            // Any drill the user may use: theirs, or one of their teams'.
+            let usable = match db.drill(drill_id)? {
+                Some(d) => db.can_use_library(me, d.library)?,
+                None => false,
+            };
+            anyhow::ensure!(usable, "That drill doesn't exist.");
+            let placed = db.place_drill(sid, slot, drill_id, &f.note)?;
+            let name = db.drill(placed)?.map(|d| d.name).unwrap_or_default();
             // Name the zone ("the right half, top lane"): station numbers
             // count only the zones with drills, so they shift as drills come and go.
             let slots = db
@@ -230,18 +223,18 @@ struct NoteForm {
 }
 
 async fn note(
-    cx: Ctx,
-    Path((sid, slot)): Path<(i64, usize)>,
+    sc: SegmentCtx,
+    Path((_, slot)): Path<(i64, usize)>,
     Form(f): Form<NoteForm>,
 ) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let result = cx
         .db(move |db| {
             db.set_station_note(sid, slot, &f.note)
                 .map(|()| "Note saved.")
         })
         .await;
-    Ok(flash::report(&cx.st, &builder(&cx, pid, Some(sid)), result))
+    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
 }
 
 #[derive(Deserialize)]
@@ -263,12 +256,10 @@ struct GoalieForm {
 }
 
 /// Place, move, turn or remove the part's goalie warm-up.
-async fn goalies(cx: Ctx, Path(sid): Path<i64>, Form(f): Form<GoalieForm>) -> AppResult<Response> {
-    let seg = cx
-        .db(move |db| db.segment(sid))
-        .await?
-        .ok_or(AppError::NotFound)?;
-    let to = builder(&cx, seg.practice_id, Some(sid));
+async fn goalies(sc: SegmentCtx, Form(f): Form<GoalieForm>) -> AppResult<Response> {
+    let (cx, seg) = (&sc.cx, &sc.seg);
+    let sid = seg.id;
+    let to = builder(cx, seg.practice_id, Some(sid));
     let ice = seg.layout.ice();
     let num = |s: &str| -> AppResult<Option<f32>> {
         if s.trim().is_empty() {
@@ -324,11 +315,11 @@ struct FlipForm {
 }
 
 async fn flip(
-    cx: Ctx,
-    Path((sid, slot)): Path<(i64, usize)>,
+    sc: SegmentCtx,
+    Path((_, slot)): Path<(i64, usize)>,
     Form(f): Form<FlipForm>,
 ) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let on = f.flip == "1";
     let result = cx
         .db(move |db| {
@@ -341,16 +332,16 @@ async fn flip(
             })
         })
         .await;
-    Ok(flash::report(&cx.st, &builder(&cx, pid, Some(sid)), result))
+    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
 }
 
-async fn clear(cx: Ctx, Path((sid, slot)): Path<(i64, usize)>) -> AppResult<Response> {
-    let pid = practice_of(&cx, sid).await?;
+async fn clear(sc: SegmentCtx, Path((_, slot)): Path<(i64, usize)>) -> AppResult<Response> {
+    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let result = cx
         .db(move |db| {
             db.clear_station(sid, slot)
                 .map(|()| "Drill removed from the station.")
         })
         .await;
-    Ok(flash::report(&cx.st, &builder(&cx, pid, Some(sid)), result))
+    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
 }

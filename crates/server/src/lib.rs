@@ -17,6 +17,7 @@ pub mod form;
 pub mod htmx;
 pub mod routes;
 pub mod state;
+pub mod throttle;
 pub mod views;
 
 pub use config::Config;

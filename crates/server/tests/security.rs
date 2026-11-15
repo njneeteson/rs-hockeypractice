@@ -208,3 +208,120 @@ async fn pages_send_security_headers() {
     assert_eq!(h["x-frame-options"], "DENY");
     assert_eq!(h["cache-control"], "no-store");
 }
+
+/// Fail a sign-in as a different user each time, claiming a different
+/// address each time in `header`; returns the status of the sixth try.
+async fn sixth_attempt(app: &mut TestApp, header: &str) -> StatusCode {
+    let mut last = StatusCode::OK;
+    for i in 0..6 {
+        let user = format!("user{i}");
+        let ip = format!("203.0.113.{i}");
+        let r = app
+            .post_with(
+                &url("/login"),
+                &[("username", &user), ("password", "nope")],
+                &[("sec-fetch-site", "same-origin"), (header, &ip)],
+            )
+            .await;
+        last = r.status;
+    }
+    last
+}
+
+#[tokio::test]
+async fn forged_forwarding_headers_dont_dodge_the_throttle() {
+    // No proxy configured: X-Forwarded-For is ignored, so changing it on
+    // every try doesn't make each one look like a new client.
+    let mut app = TestApp::new();
+    assert_eq!(
+        sixth_attempt(&mut app, "x-forwarded-for").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // Behind a configured proxy, its header names the client.
+    let mut app = TestApp::with_config(|c| c.client_ip_header = Some("cf-connecting-ip".into()));
+    assert_eq!(
+        sixth_attempt(&mut app, "cf-connecting-ip").await,
+        StatusCode::UNAUTHORIZED,
+        "different clients aren't throttled together"
+    );
+    assert_eq!(
+        sixth_attempt(&mut app, "x-forwarded-for").await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "other headers still don't count"
+    );
+}
+
+#[test]
+fn the_client_address_comes_from_the_configured_header_only() {
+    use axum::http::HeaderMap;
+    use localapp_server::routes::signin::client_ip;
+    let peer = Some("10.0.0.5:4000".parse().unwrap());
+    let mut h = HeaderMap::new();
+    h.insert("x-forwarded-for", "1.2.3.4, 172.18.0.2".parse().unwrap());
+    assert_eq!(client_ip(None, &h, peer), "10.0.0.5");
+    assert_eq!(client_ip(Some("x-forwarded-for"), &h, peer), "172.18.0.2");
+    assert_eq!(client_ip(Some("cf-connecting-ip"), &h, peer), "unknown");
+}
+
+#[tokio::test]
+async fn big_requests_are_refused() {
+    let mut app = TestApp::new();
+    app.with_admin().await;
+    let big = "x".repeat(localapp_server::routes::MAX_BODY + 1);
+    let r = app.post(&url("/teams"), &[("name", &big)]).await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn printing_is_limited_per_user() {
+    let mut app = TestApp::new();
+    let me = app.with_admin().await;
+    let r = app.post(&url("/teams"), &[("name", "Hawks")]).await;
+    let team = r.redirect().rsplit('/').next().unwrap().to_string();
+    let r = app
+        .post(
+            &url("/practices"),
+            &[("team_id", &team), ("date", "2026-12-01"), ("ice", "half")],
+        )
+        .await;
+    let practice = r.redirect().rsplit('/').next().unwrap().to_string();
+    app.post(
+        &url(&format!("/practices/{practice}/segments")),
+        &[("minutes", "10"), ("left", "h1")],
+    )
+    .await;
+    let pdf = url(&format!("/practices/{practice}/plan.pdf"));
+    assert_eq!(app.get(&pdf).await.status, StatusCode::OK);
+    // Use up this minute's allowance.
+    let now = std::time::Instant::now();
+    while app.st.renders.allow(me, now) {}
+    assert_eq!(app.get(&pdf).await.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn https_sites_ask_browsers_to_stay_on_https() {
+    use tower::ServiceExt;
+    let get = |app: &TestApp| {
+        localapp_server::router(app.st.clone()).oneshot(
+            axum::http::Request::get(url("/login"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+    };
+    let plain = TestApp::new();
+    let resp = get(&plain).await.unwrap();
+    assert!(!resp.headers().contains_key("strict-transport-security"));
+    assert!(
+        resp.headers()["permissions-policy"]
+            .to_str()
+            .unwrap()
+            .contains("camera=()")
+    );
+    assert_eq!(resp.headers()["cross-origin-opener-policy"], "same-origin");
+    let secure = TestApp::with_config(|c| c.secure_cookies = true);
+    let resp = get(&secure).await.unwrap();
+    assert_eq!(
+        resp.headers()["strict-transport-security"],
+        "max-age=31536000"
+    );
+}

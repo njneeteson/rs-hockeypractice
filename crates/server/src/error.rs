@@ -9,6 +9,8 @@ pub enum AppError {
     NotFound,
     Forbidden(&'static str),
     BadRequest(String),
+    /// Too many requests of an expensive kind; try again shortly.
+    TooMany(&'static str),
     Internal(anyhow::Error),
 }
 
@@ -37,6 +39,11 @@ impl AppError {
                 StatusCode::BAD_REQUEST,
                 "Something's not right",
                 msg.clone(),
+            ),
+            AppError::TooMany(why) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Slow down",
+                (*why).to_string(),
             ),
             AppError::Internal(e) => {
                 tracing::error!("internal error: {e:#}");

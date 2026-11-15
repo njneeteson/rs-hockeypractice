@@ -150,16 +150,13 @@ async fn teams_are_managed() {
         app.get(dup.redirect())
             .await
             .body
-            .contains("already a team")
+            .contains("already have a team")
     );
     let page = app.get(&url("/teams")).await.body;
-    let action = links(&page, "action", "/teams/")
-        .into_iter()
-        .find(|a| !a.ends_with("/delete"))
-        .unwrap();
-    app.post(&action, &[("name", "U11 Eagles"), ("notes", "Tuesdays")])
+    let team = links(&page, "href", "/teams/").pop().unwrap();
+    app.post(&team, &[("name", "U11 Eagles"), ("notes", "Tuesdays")])
         .await;
-    let page = app.get(&url("/teams")).await.body;
+    let page = app.get(&team).await.body;
     assert!(page.contains("U11 Eagles") && page.contains("Tuesdays"));
     let delete = links(&page, "action", "/delete").pop().unwrap();
     app.post(&delete, &[]).await;
@@ -305,9 +302,19 @@ async fn practices_are_built_and_printed() {
         "equipment adds up across stations"
     );
 
-    // A drill in use can't be deleted or change size.
+    // Placing copied the drill into the team's library; that copy is in use
+    // and can't be deleted. The original in my own library is separate.
+    let team_quarter = app
+        .st
+        .db(move |db| {
+            let team = db.practice(pid)?.unwrap().team_id;
+            Ok(db.team_copy_of(quarter, team)?.unwrap())
+        })
+        .await
+        .unwrap();
+    assert_ne!(team_quarter, quarter);
     let r = app
-        .post(&url(&format!("/drills/{quarter}/delete")), &[])
+        .post(&url(&format!("/drills/{team_quarter}/delete")), &[])
         .await;
     assert!(
         app.get(r.redirect())
@@ -382,7 +389,7 @@ async fn practices_are_built_and_printed() {
 #[tokio::test]
 async fn new_pages_render_and_stay_under_the_base_path() {
     let mut app = TestApp::new();
-    app.with_admin().await;
+    let admin = app.with_admin().await;
     app.post(&url("/drills/samples"), &[]).await;
     app.post(
         &url("/practices"),
@@ -395,7 +402,11 @@ async fn new_pages_render_and_stay_under_the_base_path() {
     .await;
     let pid = app
         .st
-        .db(|db| Ok(db.practices()?[0].practice.id))
+        .db(move |db| {
+            Ok(db.practices_for(localapp_core::owner::MemberId(admin))?[0]
+                .practice
+                .id)
+        })
         .await
         .unwrap();
     app.post(
@@ -446,17 +457,23 @@ async fn new_pages_render_and_stay_under_the_base_path() {
         app.post(&url("/segments/999/delete"), &[]).await.status,
         StatusCode::NOT_FOUND
     );
-    // Other users share the same library and practices.
+    // Other users see a team's practices only once they're in the team.
     app.create_user("coach", localapp_server::auth::store::Role::User);
     let mut coach = app.client();
     coach.login("coach").await;
-    assert!(
-        coach
-            .get(&url(&format!("/practices/{pid}")))
-            .await
-            .body
-            .contains("Hawks")
-    );
+    let practice = url(&format!("/practices/{pid}"));
+    assert_eq!(coach.get(&practice).await.status, StatusCode::NOT_FOUND);
+    let team = app
+        .st
+        .db(move |db| Ok(db.practice(pid)?.unwrap().team_id))
+        .await
+        .unwrap();
+    app.post(
+        &url(&format!("/teams/{team}/members")),
+        &[("username", "coach"), ("role", "coach")],
+    )
+    .await;
+    assert!(coach.get(&practice).await.body.contains("Hawks"));
 }
 
 #[tokio::test]

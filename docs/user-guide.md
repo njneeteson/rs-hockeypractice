@@ -6,6 +6,7 @@ bench. This guide walks through the app with a sample practice: a warm-up,
 three skill stations, and five puck-skill lanes with a goalie warm-up.
 
 - [The idea in one minute](#the-idea-in-one-minute)
+- [Teams and coaches](#teams-and-coaches)
 - [The drill library](#the-drill-library)
 - [Making or editing a drill](#making-or-editing-a-drill)
 - [Which drills fit where](#which-drills-fit-where)
@@ -19,7 +20,9 @@ three skill stations, and five puck-skill lanes with a goalie warm-up.
 
 ## The idea in one minute
 
-- **Drills** live in a shared library. Each one has a diagram, instructions,
+- **Teams**: you plan practices together with the other coaches of your team.
+- **Drills** live in libraries: your own, and one for each of your teams.
+  Each one has a diagram, instructions,
   key teaching points, and the equipment it needs. It is drawn on the piece of
   ice it needs: full ice, half ice, an end zone, the neutral zone, or one lane
   of these.
@@ -30,14 +33,46 @@ three skill stations, and five puck-skill lanes with a goalie warm-up.
   drawn on it, a legend, the timing and equipment, and each drill's
   instructions. One part never runs onto a second page.
 
-Edit a drill in the library and every practice that uses it updates.
+Edit a team drill and every one of the team's practices that uses it updates.
+
+## Teams and coaches
+
+**Teams** in the menu lists the teams you're in. **Add a team** creates one
+with you as its **owner**. On a team's page, owners add the other coaches by
+their username (an admin creates accounts), and make each one an **owner** or
+a **coach**:
+
+- Everyone in the team sees its practices, plans and prints them, and edits
+  the team's drills.
+- Owners also rename or delete the team and decide who's in it.
+
+You only ever see your own teams. **Leave team** takes you out; the team keeps
+its practices and drills. A team always keeps an owner, so the last owner
+has to make someone else an owner before leaving.
+
+![A team: its members and their roles](images/16-team.png)
 
 ## The drill library
 
-**Drill library** in the menu lists every drill with a thumbnail of its
-diagram, the ice it needs, its category, its length and its equipment. Search
-by name or text, or filter by ice size and category. On a new, empty library,
-**Add example drills** adds seven to start from.
+**Drill library** in the menu shows one library at a time; pick which at the
+top:
+
+- **My drills**: your own. Only you see them.
+- **<team> (team)**: the team's drills, shared by everyone in the team. The
+  team's practices use these.
+
+Each drill shows a thumbnail of its diagram, the ice it needs, its category,
+its length and its equipment. Search by name or text, or filter by ice size
+and category. In an empty library, **Add example drills** adds seven to
+start from.
+
+On a drill's page, **Copy to** puts a copy in another of your libraries: a
+team drill into your own to make your version of it, or one of yours into a
+team. A copy is separate from then on: changing one never changes the other.
+So nobody else can change your drills, and you can't change theirs; you can
+always copy one and change the copy.
+
+![A team's drill library](images/17-team-drills.png)
 
 ![The drill library with the seven example drills](images/01-drill-library.png)
 
@@ -148,8 +183,10 @@ every part shows its clock time (5:38–6:02 PM); without one, elapsed time
 
 ![A new practice](images/05-new-practice.png)
 
-The practice page is the builder: the parts on the left, the drill library on
-the right. The tiles at the top add up the length, the number of pages, and
+The practice page is the builder: the parts on the left, the drills on the
+right: the team's first, then your own (marked "yours"). Placing one of
+yours copies it into the team's library, so everyone in the team sees it
+and later changes to your own drill don't change the practice. The tiles at the top add up the length, the number of pages, and
 the equipment to bring (the most any one part needs).
 
 ![The practice builder](images/06-builder.png)
@@ -292,8 +329,18 @@ under **My account**). The printed page always stays white.
 ## Questions
 
 **Why can't I delete a drill or change its size?**
-It is used in a practice. Remove it from those practices first, or
-**Duplicate** it and change the copy.
+It is used in one of the team's practices. Remove it from those practices
+first, or **Duplicate** it and change the copy.
+
+**I placed my drill in a practice, then changed my drill. Why didn't the
+practice change?**
+Placing it copied it into the team's library, and the practice uses that
+copy. Change the team's copy (open it from the station), or copy yours into
+the team again and place the new copy.
+
+**A coach can't see our practices.**
+They need to be in the team: an owner adds them on the team's page, by the
+username the admin gave them.
 
 **I changed a practice from full ice to half ice and my parts were reset.**
 Full-ice layouts don't exist on half ice (and the other way round), so every
@@ -306,7 +353,8 @@ Yes: **Details, copy, delete → Copy** makes a copy with a new date, with all
 its parts, drills, notes, flips and goalie warm-ups.
 
 **Where does the team name come from?**
-**Teams** in the menu. It is printed in the footer of every page.
+**Teams** in the menu (owners can rename it). It is printed in the footer of
+every page.
 
 **It works without JavaScript?**
 Yes. Everything works with plain forms: pick drills from the station lists,

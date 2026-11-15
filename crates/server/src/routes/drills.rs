@@ -1,14 +1,14 @@
 //! The drill library: list, create, edit (with the diagram editor), copy, delete.
 
 use crate::error::{AppError, AppResult};
-use crate::extract::Ctx;
+use crate::extract::{Ctx, DrillCtx};
 use crate::flash;
 use crate::form;
 use crate::state::Shared;
 use crate::views::components::{card, empty, heading, legend_list, link_button, notice, svg};
 use crate::views::forms::{Live, LiveTarget, action_button, field, live_form};
 use crate::views::{Nav, Page, page};
-use axum::extract::{Path, Query};
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -17,6 +17,7 @@ use localapp_core::board;
 use localapp_core::db::DrillFilter;
 use localapp_core::diagram::{self, Diagram};
 use localapp_core::drill::{Category, Drill, DrillFields, Equipment};
+use localapp_core::owner::Library;
 use localapp_core::rink::{Area, IceSize, MAX_LANES, PracticeIce};
 use maud::{Markup, html};
 use serde::Deserialize;
@@ -28,6 +29,7 @@ pub fn routes() -> Router<Shared> {
         .route("/drills/samples", post(add_samples))
         .route("/drills/{id}", get(edit_page).post(update))
         .route("/drills/{id}/duplicate", post(duplicate))
+        .route("/drills/{id}/copy", post(copy))
         .route("/drills/{id}/delete", post(delete))
 }
 
@@ -41,6 +43,53 @@ struct ListQuery {
     ice: String,
     #[serde(default)]
     category: String,
+    /// Which library: `me` (default) or `team-<id>`.
+    #[serde(default)]
+    lib: String,
+}
+
+/// The libraries a user may use: their own, then each of their teams', with
+/// a name for each.
+pub async fn libraries(cx: &Ctx) -> AppResult<Vec<(Library, String)>> {
+    let me = cx.member();
+    let teams = cx.db(move |db| db.teams_for(me)).await?;
+    let mut libs = vec![(Library::Personal(me), "My drills".to_string())];
+    libs.extend(
+        teams
+            .into_iter()
+            .map(|(t, _)| (Library::Team(t.id), format!("{} (team)", t.name))),
+    );
+    Ok(libs)
+}
+
+/// A library from a form or query value, if the user may use it (else 404).
+pub async fn library_param(cx: &Ctx, key: &str) -> AppResult<(Library, String)> {
+    let lib = Library::from_key(key, cx.member()).ok_or(AppError::NotFound)?;
+    libraries(cx)
+        .await?
+        .into_iter()
+        .find(|(l, _)| *l == lib)
+        .ok_or(AppError::NotFound)
+}
+
+fn library_url(cx: &Ctx, lib: Library) -> String {
+    match lib {
+        Library::Personal(_) => cx.url("/drills"),
+        _ => cx.url(&format!("/drills?lib={}", lib.key())),
+    }
+}
+
+fn library_hint(lib: Library) -> &'static str {
+    match lib {
+        Library::Personal(_) => {
+            "Your own drills: only you see them. Placing one in a practice copies it into the \
+             team's library."
+        }
+        Library::Team(_) => {
+            "Shared by everyone in the team, and used by its practices. Copy a drill to your own \
+             library to make your own version."
+        }
+    }
 }
 
 /// A `<select>` over an enum with an "any" first option.
@@ -89,25 +138,35 @@ pub fn drill_card(cx: &Ctx, d: &Drill) -> Markup {
 }
 
 async fn list(cx: Ctx, Query(q): Query<ListQuery>) -> AppResult<Page> {
+    let (lib, lib_name) = library_param(&cx, &q.lib).await?;
+    let libs = libraries(&cx).await?;
     let filter = DrillFilter {
         search: q.q.clone(),
         ice: IceSize::from_key(&q.ice),
         category: Category::from_key(&q.category),
     };
     let (drills, total) = cx
-        .db(move |db| {
-            let all = db.drills(&DrillFilter::default())?.len();
-            Ok((db.drills(&filter)?, all))
-        })
+        .db(move |db| Ok((db.drills(&filter, lib)?, db.drill_count(lib)?)))
         .await?;
-    let new_url = match IceSize::from_key(&q.ice) {
-        Some(s) => cx.url(&format!("/drills/new?ice={}", s.key())),
-        None => cx.url("/drills/new"),
-    };
+    let mut new_url = format!("/drills/new?lib={}", lib.key());
+    if let Some(s) = IceSize::from_key(&q.ice) {
+        new_url.push_str(&format!("&ice={}", s.key()));
+    }
+    let new_url = cx.url(&new_url);
     let body = html! {
-        (heading("Drill library", "Drills are shared by everyone and can be used in any practice.",
-            link_button(&new_url, "New drill", true)))
-        (live_form(&cx.url("/drills"), "toolbar", LiveTarget { id: "drill-results", also: &[] }, Live::Filter, html! {
+        div id="library-head" {
+            (heading(&lib_name, library_hint(lib), link_button(&new_url, "New drill", true)))
+        }
+        (live_form(&cx.url("/drills"), "toolbar", LiveTarget { id: "drill-results", also: &["library-head"] }, Live::Filter, html! {
+            @if libs.len() > 1 {
+                (field("Library", "", html! {
+                    select name="lib" {
+                        @for (l, name) in &libs {
+                            option value=(l.key()) selected[*l == lib] { (name) }
+                        }
+                    }
+                }))
+            }
             (field("Search", "", html! { input type="search" name="q" value=(q.q) placeholder="Name or text"; }))
             (field("Ice", "", size_select("ice", "Any size", IceSize::from_key(&q.ice))))
             (field("Category", "", filter_select("category", "Any category", Category::from_key(&q.category))))
@@ -115,11 +174,14 @@ async fn list(cx: Ctx, Query(q): Query<ListQuery>) -> AppResult<Page> {
         }))
         div id="drill-results" class="refreshing" {
             @if total == 0 {
-                (card("Your library is empty", "", html! {
+                (card("This library is empty", "", html! {
                     p { "Create your first drill, or start with a few examples (one for each ice size) that you can edit." }
                     div class="actions" {
                         (link_button(&new_url, "New drill", true))
-                        (action_button(&cx.url("/drills/samples"), "Add example drills", "", None))
+                        form method="post" action=(cx.url("/drills/samples")) class="inline" {
+                            input type="hidden" name="lib" value=(lib.key());
+                            button type="submit" class="btn" { "Add example drills" }
+                        }
                     }
                 }))
             } @else if drills.is_empty() {
@@ -135,18 +197,25 @@ async fn list(cx: Ctx, Query(q): Query<ListQuery>) -> AppResult<Page> {
     Ok(page(&cx, Nav::Drills, "Drill library", body))
 }
 
-async fn add_samples(cx: Ctx) -> AppResult<Response> {
+#[derive(Deserialize)]
+struct LibForm {
+    #[serde(default)]
+    lib: String,
+}
+
+async fn add_samples(cx: Ctx, Form(f): Form<LibForm>) -> AppResult<Response> {
+    let (lib, _) = library_param(&cx, &f.lib).await?;
     let result = cx
-        .db(|db| {
+        .db(move |db| {
             let mut n = 0;
             for d in localapp_core::samples::drills() {
-                db.create_drill(d)?;
+                db.create_drill(lib, d)?;
                 n += 1;
             }
             Ok(format!("Added {n} example drills."))
         })
         .await;
-    Ok(flash::report(&cx.st, &cx.url("/drills"), result))
+    Ok(flash::report(&cx.st, &library_url(&cx, lib), result))
 }
 
 // ---- Editor -------------------------------------------------------------------
@@ -255,7 +324,14 @@ fn diagram_editor(ice: IceSize, diagram: &Diagram, name: &str) -> Markup {
     }
 }
 
-fn drill_form(cx: &Ctx, action: &str, f: &DrillFields, used: u32) -> Markup {
+/// The drill editor. `new_in`: the library a new drill goes in (a hidden field).
+fn drill_form(
+    action: &str,
+    f: &DrillFields,
+    used: u32,
+    back: &str,
+    new_in: Option<Library>,
+) -> Markup {
     let qty = |e: Equipment| {
         f.equipment
             .iter()
@@ -265,6 +341,9 @@ fn drill_form(cx: &Ctx, action: &str, f: &DrillFields, used: u32) -> Markup {
     };
     html! {
         form method="post" action=(action) class="drill-form" data-drill-form {
+            @if let Some(lib) = new_in {
+                input type="hidden" name="lib" value=(lib.key());
+            }
             (card("Drill", "", html! {
                 div class="form-grid" {
                     (field("Name", "", html! { input type="text" name="name" value=(f.name) required maxlength="80"; }))
@@ -297,7 +376,7 @@ fn drill_form(cx: &Ctx, action: &str, f: &DrillFields, used: u32) -> Markup {
                 }
                 @if used > 0 {
                     p class="muted small" {
-                        "Used on " (used) " practice page(s). Changes show up in those practices; the ice size can't change while it's in use."
+                        "Used on " (used) " of the team's practice page(s). Changes show up in those practices; the ice size can't change while it's in use."
                     }
                 }
             }))
@@ -325,7 +404,7 @@ fn drill_form(cx: &Ctx, action: &str, f: &DrillFields, used: u32) -> Markup {
             }))
             div class="form-actions" {
                 button type="submit" class="primary" { "Save drill" }
-                a class="btn" href=(cx.url("/drills")) { "Cancel" }
+                a class="btn" href=(back) { "Cancel" }
             }
         }
     }
@@ -335,6 +414,8 @@ fn drill_form(cx: &Ctx, action: &str, f: &DrillFields, used: u32) -> Markup {
 struct NewQuery {
     #[serde(default)]
     ice: String,
+    #[serde(default)]
+    lib: String,
 }
 
 fn blank(ice: IceSize) -> DrillFields {
@@ -351,10 +432,12 @@ fn blank(ice: IceSize) -> DrillFields {
 }
 
 async fn new_page(cx: Ctx, Query(q): Query<NewQuery>) -> AppResult<Page> {
+    let (lib, name) = library_param(&cx, &q.lib).await?;
     let f = blank(IceSize::from_key(&q.ice).unwrap_or(IceSize::HALF));
+    let back = library_url(&cx, lib);
     let body = html! {
-        (heading("New drill", "", link_button(&cx.url("/drills"), "← Drill library", false)))
-        (drill_form(&cx, &cx.url("/drills"), &f, 0))
+        (heading("New drill", &format!("In {name}."), link_button(&back, "← Drill library", false)))
+        (drill_form(&cx.url("/drills"), &f, 0, &back, Some(lib)))
     };
     Ok(page(&cx, Nav::Drills, "New drill", body))
 }
@@ -405,75 +488,112 @@ fn parse(pairs: &[(String, String)]) -> AppResult<DrillFields> {
 }
 
 /// The form again with the submitted values and what went wrong (nothing drawn is lost).
-fn rejected(
-    cx: &Ctx,
-    title: &str,
-    action: &str,
-    f: &DrillFields,
+struct Rejected<'a> {
+    title: &'a str,
+    action: &'a str,
+    back: &'a str,
     used: u32,
-    error: &str,
-) -> Response {
+    new_in: Option<Library>,
+}
+
+fn rejected(cx: &Ctx, r: Rejected<'_>, f: &DrillFields, error: &str) -> Response {
     let body = html! {
-        (heading(title, "", link_button(&cx.url("/drills"), "← Drill library", false)))
+        (heading(r.title, "", link_button(r.back, "← Drill library", false)))
         (notice("error", html! { "Not saved: " (error) }))
-        (drill_form(cx, action, f, used))
+        (drill_form(r.action, f, r.used, r.back, r.new_in))
     };
     (
         StatusCode::UNPROCESSABLE_ENTITY,
-        page(cx, Nav::Drills, title, body),
+        page(cx, Nav::Drills, r.title, body),
     )
         .into_response()
 }
 
+fn field_value<'a>(pairs: &'a [(String, String)], key: &str) -> &'a str {
+    pairs
+        .iter()
+        .find(|(n, _)| n == key)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("")
+}
+
 async fn create(cx: Ctx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<Response> {
+    let (lib, _) = library_param(&cx, field_value(&pairs, "lib")).await?;
     let f = parse(&pairs)?;
     let save = f.clone();
-    match cx.db(move |db| db.create_drill(save)).await {
+    match cx.db(move |db| db.create_drill(lib, save)).await {
         Ok(id) => Ok(flash::info(
             &cx.st,
             &cx.url(&format!("/drills/{id}")),
             "Drill saved.",
         )),
-        Err(e) => Ok(rejected(
-            &cx,
-            "New drill",
-            &cx.url("/drills"),
-            &f,
-            0,
-            &format!("{e:#}"),
-        )),
+        Err(e) => {
+            let back = library_url(&cx, lib);
+            let r = Rejected {
+                title: "New drill",
+                action: &cx.url("/drills"),
+                back: &back,
+                used: 0,
+                new_in: Some(lib),
+            };
+            Ok(rejected(&cx, r, &f, &format!("{e:#}")))
+        }
     }
 }
 
-async fn edit_page(cx: Ctx, Path(id): Path<i64>) -> AppResult<Page> {
-    let (d, used) = cx
-        .db(move |db| Ok((db.drill(id)?, db.drill_usage(id)?)))
-        .await?;
-    let d = d.ok_or(AppError::NotFound)?;
+async fn edit_page(dc: DrillCtx) -> AppResult<Page> {
+    let d = &dc.drill;
+    let id = d.id;
+    let used = dc.db(move |db| db.drill_usage(id)).await?;
+    let libs = libraries(&dc).await?;
+    let here = libs
+        .iter()
+        .find(|(l, _)| *l == d.library)
+        .map(|(_, n)| n.clone())
+        .unwrap_or_default();
+    let elsewhere: Vec<&(Library, String)> = libs.iter().filter(|(l, _)| *l != d.library).collect();
     let base = format!("/drills/{id}");
+    let back = library_url(&dc, d.library);
+    let mut sub = format!(
+        "In {here} · {} · {} · last changed {}",
+        d.ice.label(),
+        d.category.label(),
+        d.updated_at
+    );
+    if d.copied_from.is_some() {
+        sub.push_str(" · a copy");
+    }
     let body = html! {
-        (heading(&d.name, &format!("{} · {} · last changed {}", d.ice.label(), d.category.label(), d.updated_at),
-            html! {
-                a class="btn" href=(cx.url("/drills")) { "← Drill library" }
-                (action_button(&cx.url(&format!("{base}/duplicate")), "Duplicate", "", None))
-                @if used == 0 {
-                    (action_button(&cx.url(&format!("{base}/delete")), "Delete", "danger",
-                        Some("Delete this drill? This can't be undone.")))
+        (heading(&d.name, &sub, html! {
+            a class="btn" href=(back) { "← Drill library" }
+            (action_button(&dc.url(&format!("{base}/duplicate")), "Duplicate", "", None))
+            @if used == 0 {
+                (action_button(&dc.url(&format!("{base}/delete")), "Delete", "danger",
+                    Some("Delete this drill? This can't be undone.")))
+            }
+        }))
+        @if !elsewhere.is_empty() {
+            form method="post" action=(dc.url(&format!("{base}/copy"))) class="inline-form copy-to" {
+                label for="copy-to" { "Copy to" }
+                select id="copy-to" name="to" {
+                    @for (l, name) in &elsewhere {
+                        option value=(l.key()) { (name) }
+                    }
                 }
-            }))
-        (drill_form(&cx, &cx.url(&base), &d.fields(), used))
+                button type="submit" class="small" { "Copy" }
+                span class="muted small" { "The copy is separate: changing one never changes the other." }
+            }
+        }
+        (drill_form(&dc.url(&base), &d.fields(), used, &back, None))
     };
-    Ok(page(&cx, Nav::Drills, &d.name, body))
+    Ok(page(&dc, Nav::Drills, &d.name, body))
 }
 
-async fn update(
-    cx: Ctx,
-    Path(id): Path<i64>,
-    Form(pairs): Form<Vec<(String, String)>>,
-) -> AppResult<Response> {
+async fn update(dc: DrillCtx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<Response> {
+    let id = dc.drill.id;
     let f = parse(&pairs)?;
     let save = f.clone();
-    let result = cx
+    let result = dc
         .db(move |db| {
             let used = db.drill_usage(id)?;
             Ok((db.update_drill(id, save), used))
@@ -481,56 +601,85 @@ async fn update(
         .await?;
     match result {
         (Ok(()), _) => Ok(flash::info(
-            &cx.st,
-            &cx.url(&format!("/drills/{id}")),
+            &dc.st,
+            &dc.url(&format!("/drills/{id}")),
             "Drill saved.",
         )),
         (Err(e), used) => {
-            let action = cx.url(&format!("/drills/{id}"));
-            Ok(rejected(
-                &cx,
-                "Edit drill",
-                &action,
-                &f,
+            let back = library_url(&dc, dc.drill.library);
+            let r = Rejected {
+                title: "Edit drill",
+                action: &dc.url(&format!("/drills/{id}")),
+                back: &back,
                 used,
-                &format!("{e:#}"),
-            ))
+                new_in: None,
+            };
+            Ok(rejected(&dc, r, &f, &format!("{e:#}")))
         }
     }
 }
 
-async fn duplicate(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
-    match cx.db(move |db| db.duplicate_drill(id)).await {
+async fn duplicate(dc: DrillCtx) -> AppResult<Response> {
+    let (id, lib) = (dc.drill.id, dc.drill.library);
+    match dc.db(move |db| db.copy_drill(id, lib)).await {
         Ok(new) => Ok(flash::info(
-            &cx.st,
-            &cx.url(&format!("/drills/{new}")),
+            &dc.st,
+            &dc.url(&format!("/drills/{new}")),
             "Copied. You're editing the copy.",
         )),
         Err(e) => Ok(flash::error(
-            &cx.st,
-            &cx.url(&format!("/drills/{id}")),
+            &dc.st,
+            &dc.url(&format!("/drills/{id}")),
             format!("{e:#}"),
         )),
     }
 }
 
-async fn delete(cx: Ctx, Path(id): Path<i64>) -> AppResult<Response> {
-    match cx.db(move |db| db.delete_drill(id)).await {
-        Ok(()) => Ok(flash::info(&cx.st, &cx.url("/drills"), "Drill deleted.")),
+#[derive(Deserialize)]
+struct CopyForm {
+    to: String,
+}
+
+/// Copy a drill into another library the user may use.
+async fn copy(dc: DrillCtx, Form(f): Form<CopyForm>) -> AppResult<Response> {
+    let id = dc.drill.id;
+    let (to, name) = library_param(&dc, &f.to).await?;
+    match dc.db(move |db| db.copy_drill(id, to)).await {
+        Ok(new) => Ok(flash::info(
+            &dc.st,
+            &dc.url(&format!("/drills/{new}")),
+            format!("Copied to {name}. You're looking at the copy."),
+        )),
         Err(e) => Ok(flash::error(
-            &cx.st,
-            &cx.url(&format!("/drills/{id}")),
+            &dc.st,
+            &dc.url(&format!("/drills/{id}")),
             format!("{e:#}"),
         )),
     }
 }
 
-/// Used by the practice builder: a short note when the library is empty.
+async fn delete(dc: DrillCtx) -> AppResult<Response> {
+    let (id, lib) = (dc.drill.id, dc.drill.library);
+    match dc.db(move |db| db.delete_drill(id)).await {
+        Ok(()) => Ok(flash::info(
+            &dc.st,
+            &library_url(&dc, lib),
+            "Drill deleted.",
+        )),
+        Err(e) => Ok(flash::error(
+            &dc.st,
+            &dc.url(&format!("/drills/{id}")),
+            format!("{e:#}"),
+        )),
+    }
+}
+
+/// Used by the practice builder: a short note when no drills are available.
 pub fn empty_library_note(cx: &Ctx) -> Markup {
     notice(
         "info",
         html! {
-            "The drill library is empty. "
+            "You don't have any drills yet. "
             a href=(cx.url("/drills")) { "Add drills" } " first, then place them on the ice here."
         },
     )

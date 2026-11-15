@@ -42,11 +42,17 @@ impl Resp {
 
 impl TestApp {
     pub fn new() -> Self {
+        Self::with_config(|_| {})
+    }
+
+    /// An app with settings changed from the test defaults.
+    pub fn with_config(change: impl FnOnce(&mut Config)) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = Config::defaults();
         cfg.base_path = BASE.into();
         cfg.data_dir = dir.path().to_path_buf();
         cfg.secure_cookies = false;
+        change(&mut cfg);
         let st = AppState::new(cfg).unwrap();
         Self {
             app: router(st.clone()),
@@ -123,7 +129,8 @@ impl TestApp {
         self.post_with(path, form, &headers).await
     }
 
-    async fn post_with(
+    /// POST a form with extra request headers.
+    pub async fn post_with(
         &mut self,
         path: &str,
         form: &[(&str, &str)],

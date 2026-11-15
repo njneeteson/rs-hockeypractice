@@ -178,7 +178,11 @@ async fn edit_page(cx: AdminCtx, Path(id): Path<i64>) -> AppResult<Page> {
             }))
             @if u.id != cx.user.id {
                 (card("Delete", "", html! {
-                    p { "Deletes the account." }
+                    p {
+                        "Deletes the account, their own drills and their team memberships. "
+                        "Their teams keep their practices and drills. A team's only owner "
+                        "can't be deleted until someone else owns it."
+                    }
                     (action_button(&cx.url(&format!("{base}/delete")), "Delete user", "danger",
                         Some("Delete this user? This can't be undone.")))
                 }))
@@ -217,6 +221,16 @@ async fn delete(cx: AdminCtx, Path(id): Path<i64>) -> AppResult<Response> {
         return Err(AppError::Forbidden("You can't delete your own account."));
     }
     let u = load(&cx, id)?;
+    // Their team memberships and own drills go too; refused while a team
+    // would be left without an owner.
+    let member = localapp_core::owner::MemberId(id);
+    if let Err(e) = cx.db(move |db| db.forget_member(member)).await {
+        return Ok(flash::error(
+            &cx.st,
+            &cx.url(&format!("/admin/users/{id}")),
+            format!("{e:#}"),
+        ));
+    }
     let result = cx
         .st
         .auth

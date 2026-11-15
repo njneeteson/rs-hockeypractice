@@ -17,6 +17,9 @@ services:
     environment:
       LOCALAPP_BASE_PATH: /localapp
       TZ: America/Vancouver
+      # Caddy passes the client's address in X-Forwarded-For (the app isn't
+      # reachable except through Caddy, so the header can be trusted).
+      LOCALAPP_CLIENT_IP_HEADER: x-forwarded-for
     volumes:
       - localapp-data:/data
 

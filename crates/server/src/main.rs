@@ -5,6 +5,8 @@
 //! localapp-server admin create <username>      create an admin with a temporary password
 //! localapp-server admin reset-password <user>  give a user a new temporary password
 //! localapp-server admin list                   list accounts
+//! localapp-server backup <dir> [--keep N]      copy both databases into <dir>
+//! localapp-server backup-check <dir>           check the newest backups
 //! localapp-server healthcheck                  exit 0 if the server is up
 //! ```
 //! Configuration comes from `LOCALAPP_*` environment variables (see `config.rs`).
@@ -34,6 +36,8 @@ async fn main() -> anyhow::Result<()> {
     {
         [] | ["serve"] => serve(cfg).await,
         ["admin", rest @ ..] => cli::admin(&cfg, rest),
+        ["backup", rest @ ..] => cli::backup(&cfg, rest),
+        ["backup-check", rest @ ..] => cli::backup_check(rest),
         ["healthcheck"] => cli::healthcheck(&cfg),
         ["-h" | "--help" | "help"] => {
             println!("{USAGE}");

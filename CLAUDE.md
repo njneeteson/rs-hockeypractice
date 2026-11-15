@@ -6,8 +6,9 @@ overview and layout.
 ## Architecture rules
 
 - Two crates. `crates/core` holds domain logic and storage and must not depend
-  on axum, maud, tokio or anything about users or HTTP. `crates/server` holds
-  the web app and calls into core.
+  on axum, maud, tokio or anything about accounts, sessions or HTTP.
+  `crates/server` holds the web app and calls into core. Core stores who owns
+  what by the server's user id (`owner::MemberId`) but never authenticates.
 - Pages are server-rendered with maud. Every page must work without
   JavaScript: full pages, plain `<form method="post">`, and 303 redirects.
   htmx is an enhancement (boosting, live forms, fragments), never a requirement.
@@ -49,9 +50,24 @@ overview and layout.
 
 - **Permissions** are enforced by the extractor a handler takes: `Ctx` for any
   signed-in user, `AdminCtx` for admins. Never rely on hiding a button.
+- **Ownership:** every route with an id in its path takes an access extractor
+  (`TeamCtx`, `TeamOwnerCtx`, `PracticeCtx`, `SegmentCtx`, `DrillCtx`), never a
+  bare `Path<i64>`; it answers 404 for anything that isn't the user's. Ids in
+  form fields (a drill to place, a team, a library) are checked the same way
+  in the handler. Lists come from the member-scoped queries (`teams_for`,
+  `practices_for`, `drills(_, lib)`). Add a case to `tests/access.rs` for
+  every new route with an id.
+- **Libraries:** a drill belongs to one person's or one team's library.
+  Stations only use their practice's team's drills (`set_station` enforces
+  it); put drills in with `place_drill`, which copies others in. Copies are
+  independent; never share a drill row between libraries.
+- **Limits:** quotas live in `owner::limits` and are checked in core; PDF and
+  preview rendering goes through `AppState::render_permit`.
 - **Database work** goes through `cx.db(|db| ...)` (runs on a blocking thread).
-  Schema changes are new entries appended to `MIGRATIONS`. Never edit a
-  shipped migration. One `db/<table>.rs` file per table.
+  Schema changes are new entries appended to `MIGRATIONS` (a table rebuild
+  also goes in `REBUILDS`). Never edit a shipped migration. One `db/<table>.rs`
+  file per table. Work that must nest (copying a drill while placing it) uses
+  `Database::atomic` (a savepoint), not `unchecked_transaction`.
 - **Enums** stored in the database or shown in selects use `str_enum!`
   (stable key + label); parse form values with `form::key`.
 - **Changes** are POST → `flash::info` / `flash::error` / `flash::report`
@@ -79,6 +95,7 @@ retake the screenshots it affects at 1280 px wide.
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo deny check        # CI runs it; `cargo install cargo-deny` to run locally
 ```
 
 New pages get an integration test in `crates/server/tests/` using

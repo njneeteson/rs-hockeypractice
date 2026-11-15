@@ -114,24 +114,89 @@ ALTER TABLE segments ADD COLUMN goalie_y REAL;
 ALTER TABLE segments ADD COLUMN goalie_rot REAL;
 "#;
 
+/// V6: owners. Teams have members (by the server's user id, which the core
+/// stores but never interprets); every drill belongs to one person's library
+/// or one team's. Team names are no longer unique across the whole app (two
+/// coaches may each have a "U13 A"), which needs the table rebuilt.
+///
+/// Existing rows are left without owners here; `Database::adopt_unowned`
+/// assigns them once the server knows its users.
+const V6: &str = r#"
+CREATE TABLE teams_new (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    notes      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT INTO teams_new (id, name, notes, created_at)
+    SELECT id, name, notes, created_at FROM teams;
+DROP TABLE teams;
+ALTER TABLE teams_new RENAME TO teams;
+
+CREATE TABLE team_members (
+    team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL,
+    role      TEXT NOT NULL,
+    joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (team_id, member_id)
+);
+CREATE INDEX team_members_member ON team_members(member_id);
+
+ALTER TABLE drills ADD COLUMN owner_member INTEGER;
+ALTER TABLE drills ADD COLUMN owner_team INTEGER REFERENCES teams(id) ON DELETE CASCADE;
+ALTER TABLE drills ADD COLUMN copied_from INTEGER;
+CREATE INDEX drills_owner_member ON drills(owner_member);
+CREATE INDEX drills_owner_team ON drills(owner_team);
+"#;
+
 /// Ordered migrations; index + 1 is the resulting schema version.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+
+/// Versions whose migration rebuilds a table that others reference, so it
+/// runs with foreign keys off (SQLite's documented way to change a table's
+/// constraints), followed by a full foreign key check.
+const REBUILDS: &[usize] = &[6];
 
 pub fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "foreign_keys", true)?;
     let version: usize = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
+        let rebuild = REBUILDS.contains(&(i + 1));
+        if rebuild {
+            // Can only change outside a transaction.
+            conn.pragma_update(None, "foreign_keys", false)?;
+        }
         let tx = conn.transaction()?;
         tx.execute_batch(sql)?;
+        if rebuild {
+            let broken: i64 =
+                tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                    r.get(0)
+                })?;
+            if broken > 0 {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+                    Some(format!("migration {} broke {broken} foreign key(s)", i + 1)),
+                ));
+            }
+        }
         tx.pragma_update(None, "user_version", i + 1)?;
         tx.commit()?;
+        if rebuild {
+            conn.pragma_update(None, "foreign_keys", true)?;
+        }
     }
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+
+    /// The first `n` migrations, to build an older database in a test.
+    pub fn first(n: usize) -> Vec<&'static str> {
+        MIGRATIONS[..n].to_vec()
+    }
 
     #[test]
     fn migrations_run_once() {

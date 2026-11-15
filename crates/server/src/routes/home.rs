@@ -6,17 +6,18 @@ use crate::routes::practices::practice_table;
 use crate::views::components::{card, empty, heading, link_button, stat_tile};
 use crate::views::{Nav, Page, page};
 use chrono::Local;
-use localapp_core::db::DrillFilter;
+use localapp_core::owner::Library;
 use maud::html;
 
 pub async fn show(cx: Ctx) -> AppResult<Page> {
+    let me = cx.member();
     let (practices, drills, teams) = cx
-        .db(|db| {
-            Ok((
-                db.practices()?,
-                db.drills(&DrillFilter::default())?.len(),
-                db.teams()?.len(),
-            ))
+        .db(move |db| {
+            let teams = db.teams_for(me)?;
+            // Your own drills and your teams'.
+            let mut drills = db.drill_count(Library::Personal(me))?;
+            drills += teams.iter().map(|(t, _)| t.drills).sum::<u32>();
+            Ok((db.practices_for(me)?, drills, teams.len()))
         })
         .await?;
     let today = Local::now().date_naive();
@@ -35,7 +36,7 @@ pub async fn show(cx: Ctx) -> AppResult<Page> {
             }))
         div class="tiles" {
             (stat_tile("Upcoming practices", html! { (upcoming.len()) }, "", ""))
-            (stat_tile("Drills in the library", html! { (drills) }, "", ""))
+            (stat_tile("Drills (yours and your teams')", html! { (drills) }, "", ""))
             (stat_tile("Teams", html! { (teams) }, "", ""))
         }
         (card("Coming up", "", html! {

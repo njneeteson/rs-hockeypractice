@@ -1,8 +1,8 @@
 # Hockey Practice Planner
 
-A self-hosted web app for planning hockey practices. Coaches keep a shared
-library of drills, each drawn on a rink diagram, then build a practice by
-dropping drills onto the ice. The finished plan downloads as a PDF with one
+A self-hosted web app for planning hockey practices. Coaches keep libraries
+of drills, each drawn on a rink diagram, then build a practice by dropping
+drills onto the ice. Coaches in the same team plan together. The finished plan downloads as a PDF with one
 page per part of the practice.
 
 Built on the LocalApp template: a Rust core library, an
@@ -26,11 +26,20 @@ reverse proxy at a path such as `https://miniserver.local/localapp`.
 
 ## Planning practices
 
-Everything is shared: every signed-in user sees and edits the same teams,
-drills and practices.
+Each person sees only their own drills and the teams they belong to.
 
 - **Teams** (`/teams`): the team name is printed in the footer of each page.
-- **Drill library** (`/drills`): each drill has a name, category, suggested
+  Whoever creates a team is its **owner**; owners add other coaches (by
+  username), make them owners or coaches, and take them out. Every member
+  plans the team's practices and edits the team's drills. A team always has
+  an owner: the last one can't leave or step down.
+- **Drill libraries** (`/drills`): your own (only you see it) and one per
+  team (shared by its members); switch between them at the top of the page.
+  **Copy to…** on a drill copies it into another of your libraries. A copy
+  is separate: changing one never changes the other, so nobody can change
+  your drills, and you can't change theirs. A practice uses only its team's
+  drills: placing one of your own copies it into the team's library first
+  (once; placing it again reuses that copy). Each drill has a name, category, suggested
   minutes, the **ice it needs**, how to run it, key teaching points (one per
   line) and equipment with quantities. Its diagram is drawn in the browser:
   players (X, O, F, D or any label; coaches C and goalies G are circled),
@@ -137,13 +146,13 @@ duplicate it instead.
 | Area | What you get |
 |---|---|
 | Accounts | Sign-in with Argon2id passwords, hashed session tokens, "keep me signed in", sign-in throttling, temporary passwords that must be changed, first-run setup link |
-| Roles | `Admin` (manages users) and `User`, enforced on the server by extractors |
+| Roles | `Admin` (manages accounts) and `User`; team `Owner` and `Coach`. Enforced on the server by extractors: every route with an id checks it belongs to one of your teams or your library, and answers 404 otherwise |
 | Pages | Sign-in, first-run setup, a placeholder home page, *My account* (name, light/dark theme, password, sign out other devices), *Users* admin |
 | Web UI | Server-rendered HTML; htmx boosts every link and form, so pages load in place with a loading bar. Toast messages, tooltips, confirmations, dark mode. Works without JavaScript |
 | Storage | `auth.sqlite` for accounts, `app.sqlite` for the app's data, each with versioned migrations |
-| Security | Cross-site request blocking, strict CSP and security headers, `no-store` on pages |
-| Operations | `serve`, `admin create/reset-password/list` and `healthcheck` commands; a distroless non-root Docker image; compose file; Caddy/nginx/Traefik examples |
-| CI | `fmt`, `clippy -D warnings` and tests on every push; image published to `ghcr.io/<owner>/rs-hockeypractice` from `main` and `v*` tags |
+| Security | Cross-site request blocking, strict CSP and security headers (HSTS over HTTPS), `no-store` on pages, a 1 MB request limit, per-user limits on PDF rendering, quotas per library and team |
+| Operations | `serve`, `admin create/reset-password/list`, `backup`, `backup-check` and `healthcheck` commands; a distroless non-root Docker image; compose files for a reverse proxy or a Cloudflare Tunnel; Caddy/nginx/Traefik examples |
+| CI | `fmt`, `clippy -D warnings`, tests and `cargo deny` (advisories, licences, sources) on every push, with actions pinned to commit SHAs; Dependabot updates weekly; image published to `ghcr.io/<owner>/rs-hockeypractice` from `main` and `v*` tags |
 | Tests | Unit tests plus HTTP integration tests that drive the whole app through a cookie-aware test client |
 
 ## Layout
@@ -160,6 +169,7 @@ duplicate it instead.
 │   │       ├── rink.rs         rink geometry + markings, ice sizes, layouts and their slots
 │   │       ├── diagram.rs      a drill's drawing (JSON), how each item and line is drawn, legends
 │   │       ├── drill.rs        drills, categories, equipment
+│   │       ├── owner.rs        team members and roles, drill libraries, quotas
 │   │       ├── practice.rs     teams, practices, parts (segments), stations, Plan
 │   │       ├── board.rs        complete SVG diagrams (one drill; a practice page)
 │   │       ├── pdf.rs          the printable plan (page SVGs → PDF with krilla)
@@ -169,10 +179,11 @@ duplicate it instead.
 │   └── server/                 localapp-server: the web app
 │       ├── assets/             app.css, app.js, planner.js (builder + diagram editor), htmx.min.js, favicon.svg
 │       ├── src/
-│       │   ├── main.rs         serve / admin / healthcheck
+│       │   ├── main.rs         serve / admin / backup / healthcheck
 │       │   ├── config.rs       LOCALAPP_* environment variables
-│       │   ├── state.rs        AppState: config, auth store, app database, rate limiter
-│       │   ├── extract.rs      Ctx (signed in), AdminCtx (admin)
+│       │   ├── state.rs        AppState: config, auth store, app database, rate limiters
+│       │   ├── extract.rs      Ctx, AdminCtx, and access checks: TeamCtx, PracticeCtx, SegmentCtx, DrillCtx
+│       │   ├── throttle.rs     limits on PDF and preview rendering
 │       │   ├── auth/           passwords, sessions, throttling, cross-site guard, store/ (auth.sqlite)
 │       │   ├── routes/         practices, segments, drills, teams, home, signin, account, admin/users
 │       │   ├── views/          layout, nav, components, forms
@@ -183,7 +194,8 @@ duplicate it instead.
 │       │   └── assets.rs, cli.rs
 │       └── tests/              HTTP integration tests (common/ is the harness)
 ├── Dockerfile, compose.yaml    container build and a compose file for the server
-├── docker/                     reverse-proxy examples
+├── docker/                     reverse-proxy examples; compose.cloudflare.yaml (public, via a tunnel)
+├── deny.toml                   cargo-deny policy (CI)
 ├── scripts/                    rename + local dev runners
 ├── DEPLOY.md                   step-by-step home-server deployment
 └── CLAUDE.md                   conventions for AI-assisted work on this codebase
@@ -252,6 +264,7 @@ All settings are environment variables:
 | `LOCALAPP_SECURE_COOKIES` | `true` | HTTPS-only cookies. Set `false` only for plain-HTTP testing. |
 | `LOCALAPP_SESSION_DAYS` | `30` | Lifetime of "keep me signed in" sessions (1–365). |
 | `LOCALAPP_ADMIN_USER` / `LOCALAPP_ADMIN_PASSWORD` | – | Create this admin at start-up if there is none (instead of the setup link). |
+| `LOCALAPP_CLIENT_IP_HEADER` | – | Behind a reverse proxy or Cloudflare: the header naming the client (`x-forwarded-for`, `cf-connecting-ip`), so sign-in throttling sees real clients. The last entry is used. Unset: the TCP peer. Set it only when the app can't be reached except through that proxy. |
 | `RUST_LOG` | `info` | Log filter, e.g. `info,tower_http=debug`. |
 
 ## Building the app
@@ -296,26 +309,42 @@ and list it in `assets.rs`.
   SHA-256 hash.
 - **Throttling:** after 5 wrong passwords for a username or from an address,
   each further attempt waits longer (1 s, 2 s, 4 s … up to 5 minutes). The
-  error never says whether the username exists.
+  error never says whether the username exists. The address is the TCP peer,
+  or the header named by `LOCALAPP_CLIENT_IP_HEADER`; other forwarding
+  headers are ignored, so they can't be forged to dodge the limit.
 - **Cross-site protection:** every change must come from the app's own pages,
   checked with the browser's `Sec-Fetch-Site`/`Origin` headers on top of
   `SameSite` cookies.
-- **Roles** are enforced on the server by extractors, not just hidden in the
-  interface. The last active admin can't be demoted, disabled or deleted.
+- **Roles and ownership** are enforced on the server by extractors, not just
+  hidden in the interface. Every route with an id in its path loads the
+  thing, checks it belongs to one of your teams or your own library, and
+  answers 404 otherwise (the same as for something that doesn't exist).
+  Admins manage accounts but get no access to teams they aren't in. The last
+  active admin can't be demoted, disabled or deleted; a team's only owner
+  can't be deleted.
+- **Limits:** request bodies up to 1 MB; at most 2 PDFs or previews render at
+  once and 60 a minute per user; 1,000 drills per library, 500 practices per
+  team, 40 members per team, 20 teams owned per person.
 - **Headers:** a strict Content-Security-Policy (only the app's own scripts),
-  `X-Frame-Options: DENY`, `nosniff`, and `Cache-Control: no-store` on pages.
+  `X-Frame-Options: DENY`, `nosniff`, `Permissions-Policy`, same-origin
+  opener and resource policies, `Cache-Control: no-store` on pages, and HSTS
+  when cookies are HTTPS-only.
   htmx is configured without `eval`, script execution or page snapshots in
   browser storage.
 - **First admin:** the setup page needs a random token printed to the server
   log, so someone else on your network can't claim the admin account first.
 - The container runs as an unprivileged user in a distroless image (no shell).
+- **Supply chain:** CI runs `cargo deny` (known vulnerabilities, licences,
+  crate sources); GitHub Actions are pinned to commit SHAs; Dependabot opens
+  weekly update pull requests.
 
 The databases are not encrypted at rest. Protect the server and its backups.
 
 ## Deploying
 
 See [DEPLOY.md](DEPLOY.md): pulling the image from GitHub's registry, the
-compose file, reverse-proxy requirements, first start, backups and updates.
+compose file, reverse-proxy requirements, first start, backups and updates,
+and going public on your own domain through a Cloudflare Tunnel.
 
 ## License
 

@@ -2,6 +2,7 @@
 name = "localapp-server"
 description = "LocalApp web server: a multi-user web app for your home network"
 version.workspace = true
+publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

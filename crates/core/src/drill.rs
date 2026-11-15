@@ -1,6 +1,7 @@
 //! Drills: what they need (ice, equipment), how to run them and their diagram.
 
 use crate::diagram::Diagram;
+use crate::owner::Library;
 use crate::rink::IceSize;
 
 str_enum! {
@@ -54,6 +55,10 @@ pub struct Drill {
     /// Equipment with quantities, in [`Equipment::ALL`] order.
     pub equipment: Vec<(Equipment, u32)>,
     pub updated_at: String,
+    /// Whose library it's in.
+    pub library: Library,
+    /// The drill it was copied from, if any (in any library).
+    pub copied_from: Option<i64>,
 }
 
 /// Everything about a drill that a form edits.

@@ -258,7 +258,7 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::drills::tests::sample;
-    use crate::db::practices::tests::practice;
+    use crate::db::practices::tests::{practice, team_lib};
     use crate::rink::{End, IceSize, PracticeIce};
     const QUARTERS: End = End {
         zone: false,
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(order, vec![b, a]);
 
         let q = db
-            .create_drill(sample("Quarter drill", IceSize::QUARTER))
+            .create_drill(team_lib(&db), sample("Quarter drill", IceSize::QUARTER))
             .unwrap();
         db.set_station(b, 3, q, "Coach Sam").unwrap();
         let c = db.duplicate_segment(b).unwrap();

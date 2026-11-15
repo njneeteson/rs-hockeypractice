@@ -32,25 +32,43 @@ pub fn routes() -> Router<Shared> {
         .route("/setup", get(setup_page).post(setup))
 }
 
-/// Best-effort client address: the first `X-Forwarded-For` hop (set by the
-/// reverse proxy), else the TCP peer. Only used for sign-in throttling.
+/// The client's address, for sign-in throttling. Taken from the header named
+/// by `LOCALAPP_CLIENT_IP_HEADER` when that is set (the last entry, which
+/// is the one the trusted proxy added), else the TCP peer. Headers are never
+/// trusted otherwise: anyone can send `X-Forwarded-For`, and a forged one
+/// would give each attempt a fresh address.
 pub struct ClientIp(pub String);
 
-impl<S: Send + Sync> FromRequestParts<S> for ClientIp {
+pub fn client_ip(header: Option<&str>, headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
+    let from_header = header
+        .and_then(|h| headers.get(h))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string);
+    match (header, from_header) {
+        (Some(_), Some(ip)) => ip,
+        // Configured but missing: not through the proxy. One shared key, so
+        // such requests are throttled together.
+        (Some(_), None) => "unknown".into(),
+        (None, _) => peer.map(|p| p.ip().to_string()).unwrap_or_default(),
+    }
+}
+
+impl FromRequestParts<Shared> for ClientIp {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Infallible> {
-        let forwarded = parts
-            .headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(|v| v.trim().to_string());
+    async fn from_request_parts(parts: &mut Parts, st: &Shared) -> Result<Self, Infallible> {
         let peer = parts
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
-            .map(|c| c.0.ip().to_string());
-        Ok(Self(forwarded.or(peer).unwrap_or_default()))
+            .map(|c| c.0);
+        Ok(Self(client_ip(
+            st.cfg.client_ip_header.as_deref(),
+            &parts.headers,
+            peer,
+        )))
     }
 }
 

@@ -22,6 +22,11 @@ pub struct Config {
     pub session_days: i64,
     /// Optional first admin, created at start-up when no admin exists.
     pub bootstrap_admin: Option<(String, String)>,
+    /// The request header your reverse proxy puts the client's address in
+    /// (lower case, e.g. `cf-connecting-ip` or `x-forwarded-for`). Unset: the
+    /// TCP peer is the client. Only set it when every request comes through
+    /// that proxy, or clients could claim any address.
+    pub client_ip_header: Option<String>,
 }
 
 pub const ENV_BASE_PATH: &str = "LOCALAPP_BASE_PATH";
@@ -31,6 +36,7 @@ pub const ENV_SECURE_COOKIES: &str = "LOCALAPP_SECURE_COOKIES";
 pub const ENV_SESSION_DAYS: &str = "LOCALAPP_SESSION_DAYS";
 pub const ENV_ADMIN_USER: &str = "LOCALAPP_ADMIN_USER";
 pub const ENV_ADMIN_PASSWORD: &str = "LOCALAPP_ADMIN_PASSWORD";
+pub const ENV_CLIENT_IP_HEADER: &str = "LOCALAPP_CLIENT_IP_HEADER";
 
 /// `"/"`, `""`, `"localapp"`, `"/localapp/"` → `""` or `"/localapp"`.
 pub fn normalize_base_path(raw: &str) -> anyhow::Result<String> {
@@ -73,6 +79,7 @@ impl Config {
             secure_cookies: true,
             session_days: 30,
             bootstrap_admin: None,
+            client_ip_header: None,
         }
     }
 
@@ -106,6 +113,15 @@ impl Config {
                 .with_context(|| {
                     format!("{ENV_SESSION_DAYS} must be a whole number of days, 1–365, got {v:?}")
                 })?;
+        }
+        if let Some(v) = get(ENV_CLIENT_IP_HEADER) {
+            let v = v.trim().to_ascii_lowercase();
+            if !v.is_empty() {
+                axum::http::HeaderName::from_bytes(v.as_bytes()).with_context(|| {
+                    format!("{ENV_CLIENT_IP_HEADER} must be a header name, got {v:?}")
+                })?;
+                c.client_ip_header = Some(v);
+            }
         }
         c.bootstrap_admin = match (get(ENV_ADMIN_USER), get(ENV_ADMIN_PASSWORD)) {
             (Some(u), Some(p)) if !u.trim().is_empty() && !p.is_empty() => {
@@ -163,6 +179,7 @@ mod tests {
             (ENV_SESSION_DAYS, "7"),
             (ENV_ADMIN_USER, "alice"),
             (ENV_ADMIN_PASSWORD, "correct horse"),
+            (ENV_CLIENT_IP_HEADER, " CF-Connecting-IP "),
         ]
         .into();
         let c = Config::from_lookup(|k| env.get(k).map(|v| v.to_string())).unwrap();
@@ -171,11 +188,14 @@ mod tests {
         assert_eq!(c.bind.port(), 9000);
         assert!(!c.secure_cookies);
         assert_eq!(c.session_days, 7);
+        assert_eq!(c.client_ip_header.as_deref(), Some("cf-connecting-ip"));
         assert_eq!(
             c.bootstrap_admin,
             Some(("alice".into(), "correct horse".into()))
         );
         assert!(Config::from_lookup(|k| (k == ENV_ADMIN_USER).then(|| "bob".to_string())).is_err());
         assert!(Config::from_lookup(|k| (k == ENV_SESSION_DAYS).then(|| "0".to_string())).is_err());
+        let bad_header = |k: &str| (k == ENV_CLIENT_IP_HEADER).then(|| "a b".to_string());
+        assert!(Config::from_lookup(bad_header).is_err());
     }
 }

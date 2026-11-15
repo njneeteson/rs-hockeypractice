@@ -1,0 +1,28 @@
+# Weekly pull requests for dependency updates. Each one runs CI (including
+# `cargo deny`), so a broken or vulnerable update shows up before it's merged.
+# GitHub Actions are pinned to commit SHAs; Dependabot updates the SHA and
+# its version comment together.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One PR for all patch and minor updates; majors come one by one.
+      cargo-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
