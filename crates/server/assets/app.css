@@ -1676,6 +1676,13 @@ main:has(.builder) {
   fill: color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
+/* A part's rink never grows taller than this: a wider plan column shows more
+   parts rather than a bigger picture. The SVG keeps its shape and centres
+   itself in the column (clicks map through getScreenCTM, so they still land). */
+.board-wrap .rink-svg {
+  max-height: min(20rem, 40vh);
+}
+
 .board-legend.compact .legend {
   flex-direction: row;
   flex-wrap: wrap;
