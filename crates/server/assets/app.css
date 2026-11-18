@@ -20,6 +20,8 @@
   --warn: #c98500;
   --crit: #d03b3b;
   --radius: 10px;
+  /* Height of the sticky top bar (the side navigation sits below it). */
+  --topbar-h: 53px;
   --shadow: 0 1px 2px rgb(0 0 0 / 6%);
   /* Rink diagrams stay light (they are pictures of paper plans); only the
      ice and boards adapt so the rink stands out on a dark page. */
@@ -145,6 +147,22 @@ code,
   padding: 1rem 0.5rem;
   border-right: 1px solid var(--border);
   background: var(--surface);
+}
+
+/* On wide screens the side navigation stays in view and scrolls on its own. */
+@media (min-width: 761px) {
+  .topbar {
+    height: var(--topbar-h);
+  }
+
+  .sidenav {
+    position: sticky;
+    top: var(--topbar-h);
+    align-self: start;
+    height: calc(100vh - var(--topbar-h));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 .sidenav a {
@@ -1096,11 +1114,6 @@ main:has(.builder) {
   min-width: 0;
 }
 
-.builder.summary-on .library {
-  top: 100px;
-  max-height: calc(100vh - 116px);
-}
-
 .builder-tools [aria-pressed="true"] {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
@@ -1251,6 +1264,64 @@ main:has(.builder) {
 .peek ul {
   margin: 0.3rem 0 0;
   padding-left: 1.1rem;
+}
+
+/* The parts column: a "Practice plan" card. On wide screens it stays in view
+   beside the library, and its parts scroll inside it (only while the pointer
+   is over them; the page scrolls otherwise). */
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0.8rem 0.9rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.plan-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.plan-card .builder-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.plan-card .parts .segment {
+  background: var(--bg);
+  box-shadow: none;
+}
+
+@media (min-width: 1061px) {
+  .plan-card {
+    position: sticky;
+    top: 64px;
+    height: calc(100vh - 116px);
+  }
+
+  .library {
+    height: calc(100vh - 116px);
+  }
+
+  .builder.summary-on .plan-card,
+  .builder.summary-on .library {
+    top: 100px;
+    height: calc(100vh - 152px);
+  }
+
+  .plan-card .parts {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    margin: 0 -0.5rem;
+    padding: 0.1rem 0.5rem 0.5rem;
+  }
 }
 
 /* ---- Above the parts: undo and history, view toggles ---- */

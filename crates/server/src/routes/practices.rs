@@ -1168,6 +1168,8 @@ async fn show(pc: PracticeCtx) -> AppResult<Page> {
             // settings, reordering) swaps just this column, the summary above
             // it and the drill cards, keeping the scroll position. Without it,
             // the forms post and redirect back as usual.
+            section class="plan-card" aria-labelledby="plan-title" {
+            h2 id="plan-title" class="plan-title" { "Practice plan" }
             div class="builder-main" id="builder-main" hx-target="#builder-main" hx-select="#builder-main"
                 hx-swap="outerHTML show:none" hx-push-url="false"
                 hx-select-oob="#practice-head,#practice-tiles,#practice-focus,#practice-timeline,#practice-sticky,#library-cards,#toasts" {
@@ -1184,6 +1186,7 @@ async fn show(pc: PracticeCtx) -> AppResult<Page> {
                     }
                     @if plan.segments.is_empty() { (add_between(&cx, &plan, 0)) }
                 }
+            }
             }
             div class="divider js-only" role="separator" aria-orientation="vertical" tabindex="0"
                 aria-label="Resize the drill library (arrow keys)" data-divider {}

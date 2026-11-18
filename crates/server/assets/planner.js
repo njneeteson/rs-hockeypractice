@@ -445,6 +445,7 @@ document.addEventListener("click", (event) => {
         path: location.pathname,
         y: window.scrollY,
         library: scroller ? scroller.scrollTop : 0,
+        parts: (document.querySelector("#builder-main .parts") || {}).scrollTop || 0,
       }),
     );
   } catch {
@@ -472,6 +473,10 @@ function restoreReturn() {
     const scroller = document.querySelector(".library-scroll");
     if (scroller) {
       scroller.scrollTop = saved.library;
+    }
+    const parts = document.querySelector("#builder-main .parts");
+    if (parts) {
+      parts.scrollTop = saved.parts || 0;
     }
   });
 }
@@ -702,8 +707,8 @@ document.addEventListener("keydown", (event) => {
   }
   event.preventDefault();
   const builder = divider.closest("[data-builder]");
-  const main = document.getElementById("builder-main");
-  const now = main ? main.getBoundingClientRect().width : PARTS_MIN;
+  const plan = builder.querySelector(".plan-card");
+  const now = plan ? plan.getBoundingClientRect().width : PARTS_MIN;
   setPartsWidth(builder, now + (event.key === "ArrowRight" ? 32 : -32));
   rememberPartsWidth(builder);
 });
@@ -764,6 +769,24 @@ function watchSummary() {
 }
 
 window.addEventListener("resize", placeSummary);
+
+// The parts scroll inside the "Practice plan" card on wide screens. Keep
+// their scroll position when the column is redrawn after a change.
+let partsScroll = null;
+
+document.addEventListener("htmx:beforeSwap", (event) => {
+  const target = event.detail.target;
+  const parts = target && target.id === "builder-main" && target.querySelector(".parts");
+  partsScroll = parts ? parts.scrollTop : null;
+});
+
+document.addEventListener("htmx:afterSwap", () => {
+  const parts = document.querySelector("#builder-main .parts");
+  if (parts && partsScroll !== null) {
+    parts.scrollTop = partsScroll;
+  }
+  partsScroll = null;
+});
 
 // ---- Practice builder: after every redraw -------------------------------------------
 

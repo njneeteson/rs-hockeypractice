@@ -198,7 +198,10 @@ every part shows its clock time (5:38–6:02 PM); without one, elapsed time
 The practice page is the builder. At the top: the length, the number of
 pages, the equipment to bring (the most any one part needs), the
 **Development focus** panel and the **timeline**. Below them are two columns:
-the parts on the left and the drill library on the right.
+the **Practice plan** card with the parts on the left, and the drill library
+on the right. On a wide screen both stay in view as you scroll: the parts
+scroll inside their card while the pointer is over them, and the library
+scrolls inside its own box.
 
 ![The practice builder](images/06-builder.png)
 
