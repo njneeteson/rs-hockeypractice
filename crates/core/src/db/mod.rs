@@ -7,6 +7,7 @@
 mod adopt;
 mod drill_equipment;
 pub mod drills;
+pub mod practice_history;
 pub mod practices;
 mod schema;
 mod segments;

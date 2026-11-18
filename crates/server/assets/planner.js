@@ -1,20 +1,74 @@
-// Practice planner behaviour: the practice builder's drill library (drag and
-// drop) and the drill diagram editor. Both are enhancements: without
-// JavaScript, stations are filled with a <select> + "Place" button and the
-// diagram is edited as JSON.
+// Practice planner behaviour: the practice builder (drill library, drag and
+// drop, part tabs, reordering, the resizable library column) and the drill
+// diagram editor. All are enhancements: without JavaScript, stations are
+// filled with a <select> + "Place" button, a part's tabs show one under the
+// other, and the diagram is edited as JSON.
 "use strict";
+
+// Which optional builder extras this person has on (My account), from the
+// builder's data-extras.
+function extraOn(name) {
+  const builder = document.querySelector("[data-builder]");
+  return Boolean(builder && (builder.dataset.extras || "").split(" ").includes(name));
+}
+
+// Storage that may be unavailable (private windows, blocked site data).
+function stored(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v;
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Not remembered; fine.
+  }
+}
 
 // ---- Practice builder: drill library -----------------------------------------
 //
 // Drag a drill from the library onto a station (a `.drop-slot` in a rink
-// diagram) it fits in (`data-accepts` lists the drill sizes), or click a drill and then a station. Placing
-// posts the same form the no-JavaScript "Place" button does.
+// diagram) it fits in (`data-accepts` lists the drill sizes), or click a drill
+// and then a station. Placing posts the same form the no-JavaScript "Place"
+// button does.
 
 function filterLibrary(library) {
-  const query = library.querySelector("[data-library-search]").value.trim().toLowerCase();
-  const size = library.querySelector("[data-library-size]").value;
-  for (const chip of library.querySelectorAll(".drill-chip")) {
-    chip.hidden = !(chip.dataset.name.includes(query) && (!size || chip.dataset.size === size));
+  const value = (selector) => {
+    const el = library.querySelector(selector);
+    return el ? el.value : "";
+  };
+  const query = value("[data-library-search]").trim().toLowerCase();
+  const size = value("[data-library-size]");
+  const category = value("[data-library-category]");
+  const level = value("[data-library-level]");
+  const closerBox = library.querySelector("[data-library-closer]");
+  const closer = Boolean(closerBox && closerBox.checked);
+  const chips = Array.from(library.querySelectorAll(".drill-chip"));
+  for (const chip of chips) {
+    const help = Number(chip.dataset.help);
+    chip.hidden = !(
+      chip.dataset.name.includes(query) &&
+      (!size || chip.dataset.size === size) &&
+      (!category || chip.dataset.category === category) &&
+      (!level || chip.dataset.level === level) &&
+      (!closer || (chip.dataset.help !== undefined && help > 0.5))
+    );
+  }
+  // "Closer to the targets": the most helpful first; otherwise library order.
+  const list = library.querySelector(".library-grid");
+  if (list) {
+    const key = closer
+      ? (c) => -Number(c.dataset.help || -1e9)
+      : (c) => Number(c.dataset.order);
+    chips.sort((a, b) => key(a) - key(b));
+    for (const chip of chips) {
+      list.append(chip);
+    }
   }
 }
 
@@ -27,7 +81,7 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   const library = event.target.closest("[data-library]");
-  if (library && event.target.matches("[data-library-size]")) {
+  if (library && event.target.matches("select, [data-library-closer]")) {
     filterLibrary(library);
   }
 });
@@ -40,6 +94,16 @@ function showTargets(size) {
     const accepts = (slot.dataset.accepts || slot.dataset.size || "").split(" ");
     slot.classList.toggle("can-drop", Boolean(size) && accepts.includes(size));
     slot.classList.remove("over");
+  }
+  // On each part: how many empty stations the drill fits; parts with none dim.
+  for (const seg of document.querySelectorAll(".segment")) {
+    const out = seg.querySelector(".fit-count");
+    const fits = seg.querySelectorAll(".drop-slot.can-drop.empty").length;
+    const any = seg.querySelectorAll(".drop-slot.can-drop").length;
+    if (out) {
+      out.textContent = size ? (fits ? `fits ${fits} empty` : any ? "fits (replace)" : "") : "";
+    }
+    seg.classList.toggle("no-fit", Boolean(size) && Boolean(out) && any === 0);
   }
 }
 
@@ -56,11 +120,13 @@ function pick(chip) {
   picked = { id: chip.dataset.drillId, size: chip.dataset.size, chip };
   chip.classList.add("armed");
   showTargets(picked.size);
+  // In the drawer (narrow screens), get out of the way to show the stations.
+  setLibraryOpen(false);
 }
 
 // Post `fields` to `action` as the no-JavaScript form would. The form goes
-// inside the board (so inside the builder column, which htmx updates in place).
-function postFromBoard(wrap, action, fields) {
+// inside `within` (inside the builder column, which htmx updates in place).
+function postFromBoard(within, action, fields) {
   const form = document.createElement("form");
   form.method = "post";
   form.action = action;
@@ -72,7 +138,7 @@ function postFromBoard(wrap, action, fields) {
     input.value = value;
     form.append(input);
   }
-  wrap.append(form);
+  within.append(form);
   if (window.htmx) {
     htmx.process(form);
   }
@@ -182,24 +248,125 @@ function endGoalieDrag(commit) {
 document.addEventListener("pointerup", () => endGoalieDrag(true));
 document.addEventListener("pointercancel", () => endGoalieDrag(false));
 
+// ---- Practice builder: reordering parts -----------------------------------------
+//
+// Drag a part card by its grip (or a block of the timeline) before or after
+// another; the new position is posted like the ↑/↓ buttons. `partDrag` is
+// { id, from, kind: "card" | "block" }.
+
+let partDrag = null;
+
+function moveTarget(event, kind) {
+  const selector = kind === "card" ? ".parts .segment" : ".timeline .tl-block";
+  const el = event.target.closest && event.target.closest(selector);
+  if (!el) {
+    return null;
+  }
+  const box = el.getBoundingClientRect();
+  const after =
+    kind === "card"
+      ? event.clientY > box.top + box.height / 2
+      : event.clientX > box.left + box.width / 2;
+  return { el, after };
+}
+
+function clearDropMarks() {
+  for (const el of document.querySelectorAll(".drop-before, .drop-after")) {
+    el.classList.remove("drop-before", "drop-after");
+  }
+}
+
+function movePart(id, to) {
+  const main = document.getElementById("builder-main");
+  const parts = main && main.querySelector("[data-move-url]");
+  if (parts) {
+    postFromBoard(main, `${parts.dataset.moveUrl}${id}/move`, { to });
+  }
+}
+
 document.addEventListener("dragstart", (event) => {
-  const chip = event.target.closest && event.target.closest(".drill-chip");
-  if (!chip) {
+  const grip = event.target.closest && event.target.closest(".segment .grip");
+  const block = event.target.closest && event.target.closest(".timeline .tl-block");
+  if (!grip && !block) {
     return;
   }
+  const el = grip ? grip.closest(".segment") : block;
+  partDrag = { id: el.dataset.segId, from: Number(el.dataset.index), kind: grip ? "card" : "block" };
+  event.dataTransfer.setData("text/x-part", el.dataset.segId);
+  event.dataTransfer.effectAllowed = "move";
+  if (grip) {
+    event.dataTransfer.setDragImage(el, 20, 20);
+  }
+  el.classList.add("dragging");
+});
+
+document.addEventListener("dragover", (event) => {
+  if (!partDrag) {
+    return;
+  }
+  const t = moveTarget(event, partDrag.kind);
+  clearDropMarks();
+  if (t) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    t.el.classList.add(t.after ? "drop-after" : "drop-before");
+  }
+});
+
+document.addEventListener("drop", (event) => {
+  if (!partDrag) {
+    return;
+  }
+  const t = moveTarget(event, partDrag.kind);
+  const drag = partDrag;
+  clearDropMarks();
+  if (!t) {
+    return;
+  }
+  event.preventDefault();
+  let to = Number(t.el.dataset.index) + (t.after ? 1 : 0);
+  if (drag.from < to) {
+    to -= 1;
+  }
+  if (to !== drag.from) {
+    movePart(drag.id, to);
+  }
+});
+
+document.addEventListener("dragend", () => {
+  if (partDrag) {
+    for (const el of document.querySelectorAll(".dragging")) {
+      el.classList.remove("dragging");
+    }
+    clearDropMarks();
+    partDrag = null;
+  }
+});
+
+// ---- Practice builder: dragging drills -------------------------------------------
+
+document.addEventListener("dragstart", (event) => {
+  const chip = event.target.closest && event.target.closest(".drill-chip");
+  if (!chip || event.target.closest(".tile-edit")) {
+    return;
+  }
+  hidePeek();
   event.dataTransfer.setData("text/plain", chip.dataset.drillId);
   event.dataTransfer.effectAllowed = "copy";
   picked = { id: chip.dataset.drillId, size: chip.dataset.size, chip };
   showTargets(chip.dataset.size);
+  setLibraryOpen(false);
 });
 
 document.addEventListener("dragend", () => {
-  pick(null);
+  if (picked) {
+    pick(null);
+  }
 });
 
 document.addEventListener("dragover", (event) => {
   const slot = event.target.closest && event.target.closest(".drop-slot.can-drop");
-  if (slot) {
+  if (slot && !partDrag) {
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
     slot.classList.add("over");
@@ -215,7 +382,7 @@ document.addEventListener("dragleave", (event) => {
 
 document.addEventListener("drop", (event) => {
   const slot = event.target.closest && event.target.closest(".drop-slot.can-drop");
-  if (slot) {
+  if (slot && !partDrag) {
     event.preventDefault();
     placeDrill(slot, event.dataTransfer.getData("text/plain") || (picked && picked.id));
   }
@@ -224,7 +391,9 @@ document.addEventListener("drop", (event) => {
 document.addEventListener("click", (event) => {
   const chip = event.target.closest(".drill-chip");
   if (chip) {
-    pick(chip);
+    if (!event.target.closest(".tile-edit")) {
+      pick(chip);
+    }
     return;
   }
   const slot = event.target.closest(".drop-slot");
@@ -241,17 +410,392 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   const chip = event.target.closest && event.target.closest(".drill-chip");
-  if (chip && (event.key === "Enter" || event.key === " ")) {
+  if (chip && !event.target.closest(".tile-edit") && (event.key === "Enter" || event.key === " ")) {
     event.preventDefault();
     pick(chip);
   } else if (event.key === "Escape" && picked) {
     pick(null);
+  } else if (event.key === "Escape") {
+    setLibraryOpen(false);
   }
 });
 
 document.addEventListener("htmx:beforeSwap", () => {
   picked = null;
 });
+
+// ---- Practice builder: editing a drill and coming back ---------------------------
+//
+// The ✎ on a drill card opens the drill editor, which returns to the practice
+// after saving or cancelling. Remember where the page and the library were
+// scrolled, to put them back.
+
+const RETURN_KEY = "builder-return";
+
+document.addEventListener("click", (event) => {
+  const edit = event.target.closest(".tile-edit");
+  if (!edit) {
+    return;
+  }
+  const scroller = document.querySelector(".library-scroll");
+  try {
+    sessionStorage.setItem(
+      RETURN_KEY,
+      JSON.stringify({
+        path: location.pathname,
+        y: window.scrollY,
+        library: scroller ? scroller.scrollTop : 0,
+      }),
+    );
+  } catch {
+    // Not remembered; the page opens at the top.
+  }
+});
+
+function restoreReturn() {
+  let saved = null;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(RETURN_KEY) || "null");
+  } catch {
+    return;
+  }
+  if (!saved || saved.path !== location.pathname || !document.querySelector("[data-builder]")) {
+    return;
+  }
+  try {
+    sessionStorage.removeItem(RETURN_KEY);
+  } catch {
+    // Ignore.
+  }
+  requestAnimationFrame(() => {
+    window.scrollTo(0, saved.y);
+    const scroller = document.querySelector(".library-scroll");
+    if (scroller) {
+      scroller.scrollTop = saved.library;
+    }
+  });
+}
+
+// ---- Practice builder: a larger look at a drill -------------------------------------
+
+let peekTimer = null;
+
+function hidePeek() {
+  clearTimeout(peekTimer);
+  const peek = document.getElementById("peek");
+  if (peek) {
+    peek.remove();
+  }
+}
+
+function showPeek(chip) {
+  hidePeek();
+  if (!extraOn("peek") || picked) {
+    return;
+  }
+  peekTimer = setTimeout(() => {
+    const thumb = chip.querySelector(".tile-thumb svg");
+    if (!thumb || !chip.isConnected) {
+      return;
+    }
+    const peek = document.createElement("div");
+    peek.id = "peek";
+    peek.className = "peek";
+    peek.setAttribute("role", "tooltip");
+    peek.append(thumb.cloneNode(true));
+    const name = document.createElement("strong");
+    name.textContent = chip.querySelector(".tile-title strong").textContent;
+    peek.append(name);
+    const points = chip.querySelector(".peek-points");
+    if (points) {
+      const list = points.cloneNode(true);
+      list.hidden = false;
+      peek.append(list);
+    }
+    document.body.append(peek);
+    // Beside the card, on whichever side has room; within the window.
+    const box = chip.getBoundingClientRect();
+    const w = peek.offsetWidth;
+    const h = peek.offsetHeight;
+    const left = box.left - w - 12 > 8 ? box.left - w - 12 : Math.min(box.right + 12, window.innerWidth - w - 8);
+    const top = Math.max(8, Math.min(box.top, window.innerHeight - h - 8));
+    peek.style.left = `${left}px`;
+    peek.style.top = `${top}px`;
+  }, 350);
+}
+
+document.addEventListener("mouseover", (event) => {
+  const chip = event.target.closest && event.target.closest(".drill-tile");
+  const from = event.relatedTarget && event.relatedTarget.closest && event.relatedTarget.closest(".drill-tile");
+  if (chip && chip !== from) {
+    showPeek(chip);
+  } else if (!chip && from) {
+    hidePeek();
+  }
+});
+
+document.addEventListener("focusin", (event) => {
+  const chip = event.target.closest && event.target.closest(".drill-tile");
+  if (chip) {
+    showPeek(chip);
+  }
+});
+
+document.addEventListener("focusout", hidePeek);
+document.addEventListener("scroll", hidePeek, { capture: true, passive: true });
+
+// ---- Practice builder: part tabs ------------------------------------------------------
+//
+// Each part card shows its rink, stations, settings or printed page. The tab
+// chosen for each part is kept when the parts are redrawn after a change.
+
+const partTabs = new Map();
+
+function showTab(seg, key) {
+  seg.dataset.tab = key;
+  partTabs.set(seg.dataset.segId, key);
+  for (const tab of seg.querySelectorAll(".part-tab")) {
+    const on = tab.dataset.tab === key;
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+    tab.tabIndex = on ? 0 : -1;
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const tab = event.target.closest(".part-tab");
+  if (tab) {
+    showTab(tab.closest(".segment"), tab.dataset.tab);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  const tab = event.target.closest && event.target.closest(".part-tab");
+  if (!tab || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) {
+    return;
+  }
+  const tabs = Array.from(tab.parentElement.querySelectorAll(".part-tab"));
+  const i = tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : -1);
+  const next = tabs[(i + tabs.length) % tabs.length];
+  event.preventDefault();
+  showTab(tab.closest(".segment"), next.dataset.tab);
+  next.focus();
+});
+
+// ---- Practice builder: overview, the drawer, the divider -----------------------------
+
+function applyOverview() {
+  const main = document.getElementById("builder-main");
+  if (!main) {
+    return;
+  }
+  const on = stored("builder-overview", "0") === "1";
+  main.classList.toggle("overview", on);
+  const button = main.querySelector("[data-overview-toggle]");
+  if (button) {
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-overview-toggle]")) {
+    store("builder-overview", stored("builder-overview", "0") === "1" ? "0" : "1");
+    applyOverview();
+  }
+});
+
+function setLibraryOpen(open) {
+  const library = document.getElementById("library");
+  if (!library) {
+    return;
+  }
+  library.classList.toggle("open", open);
+  for (const button of document.querySelectorAll("[data-library-toggle]")) {
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (open) {
+    const search = library.querySelector("[data-library-search]");
+    if (search) {
+      search.focus();
+    }
+  }
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-library-toggle]")) {
+    const library = document.getElementById("library");
+    setLibraryOpen(Boolean(library) && !library.classList.contains("open"));
+  }
+});
+
+// The divider between the parts and the library: drag it (or use the arrow
+// keys) to give either more room. Each column keeps enough width to stay
+// legible: a part's rink and controls, two drill cards across.
+const PARTS_MIN = 400;
+const LIBRARY_MIN = 340;
+
+function setPartsWidth(builder, px) {
+  const total = builder.getBoundingClientRect().width - 22;
+  const width = Math.round(Math.min(Math.max(px, PARTS_MIN), total - LIBRARY_MIN));
+  if (total < PARTS_MIN + LIBRARY_MIN) {
+    builder.style.removeProperty("--parts-w");
+    return;
+  }
+  builder.style.setProperty("--parts-w", `${width}px`);
+  const divider = builder.querySelector("[data-divider]");
+  if (divider) {
+    divider.setAttribute("aria-valuenow", String(Math.round((width / total) * 100)));
+  }
+}
+
+function applyPartsWidth() {
+  const builder = document.querySelector("[data-builder]");
+  const saved = Number(stored("builder-parts", "0"));
+  if (builder && saved > 0) {
+    // Stored as a share of the width, so it suits any window size.
+    setPartsWidth(builder, saved * (builder.getBoundingClientRect().width - 22));
+  }
+}
+
+function rememberPartsWidth(builder) {
+  const value = builder.style.getPropertyValue("--parts-w");
+  const total = builder.getBoundingClientRect().width - 22;
+  if (value && total > 0) {
+    store("builder-parts", String(parseFloat(value) / total));
+  }
+}
+
+let dividerDrag = null;
+
+document.addEventListener("pointerdown", (event) => {
+  const divider = event.target.closest && event.target.closest("[data-divider]");
+  if (!divider || event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  const builder = divider.closest("[data-builder]");
+  dividerDrag = { divider, builder, left: builder.getBoundingClientRect().left };
+  divider.classList.add("dragging");
+  divider.setPointerCapture(event.pointerId);
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (dividerDrag) {
+    setPartsWidth(dividerDrag.builder, event.clientX - dividerDrag.left - 7);
+  }
+});
+
+function endDividerDrag() {
+  if (dividerDrag) {
+    dividerDrag.divider.classList.remove("dragging");
+    rememberPartsWidth(dividerDrag.builder);
+    dividerDrag = null;
+  }
+}
+
+document.addEventListener("pointerup", endDividerDrag);
+document.addEventListener("pointercancel", endDividerDrag);
+
+document.addEventListener("keydown", (event) => {
+  const divider = event.target.closest && event.target.closest("[data-divider]");
+  if (!divider || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) {
+    return;
+  }
+  event.preventDefault();
+  const builder = divider.closest("[data-builder]");
+  const main = document.getElementById("builder-main");
+  const now = main ? main.getBoundingClientRect().width : PARTS_MIN;
+  setPartsWidth(builder, now + (event.key === "ArrowRight" ? 32 : -32));
+  rememberPartsWidth(builder);
+});
+
+// Double-click the divider: back to half and half.
+document.addEventListener("dblclick", (event) => {
+  const divider = event.target.closest && event.target.closest("[data-divider]");
+  if (divider) {
+    divider.closest("[data-builder]").style.removeProperty("--parts-w");
+    store("builder-parts", "0");
+  }
+});
+
+window.addEventListener("resize", applyPartsWidth);
+
+// ---- Practice builder: the summary that follows the page --------------------------
+//
+// Once the stat tiles have scrolled away, a slim bar with the length and the
+// development shares stays under the top bar.
+
+let summaryOn = false;
+
+function placeSummary() {
+  const bar = document.querySelector("[data-sticky-summary]");
+  const builder = document.querySelector("[data-builder]");
+  if (!bar || !builder) {
+    return;
+  }
+  bar.hidden = !summaryOn;
+  builder.classList.toggle("summary-on", summaryOn);
+  if (summaryOn) {
+    const top = document.querySelector(".topbar");
+    const box = builder.getBoundingClientRect();
+    bar.style.top = `${top ? top.offsetHeight : 0}px`;
+    bar.style.left = `${box.left}px`;
+    bar.style.width = `${box.width}px`;
+  }
+}
+
+let summaryWatch = null;
+
+function watchSummary() {
+  const tiles = document.getElementById("practice-tiles");
+  if (summaryWatch) {
+    summaryWatch.disconnect();
+    summaryWatch = null;
+  }
+  if (!tiles || !extraOn("sticky") || !("IntersectionObserver" in window)) {
+    summaryOn = false;
+    placeSummary();
+    return;
+  }
+  summaryWatch = new IntersectionObserver(([entry]) => {
+    summaryOn = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+    placeSummary();
+  });
+  summaryWatch.observe(tiles);
+}
+
+window.addEventListener("resize", placeSummary);
+
+// ---- Practice builder: after every redraw -------------------------------------------
+
+function setUpBuilder() {
+  if (!document.querySelector("[data-builder]")) {
+    return;
+  }
+  for (const seg of document.querySelectorAll(".parts .segment")) {
+    const key = partTabs.get(seg.dataset.segId) || "rink";
+    if (seg.querySelector(`.part-tab[data-tab="${key}"]`)) {
+      showTab(seg, key);
+    } else {
+      showTab(seg, "rink");
+    }
+  }
+  applyOverview();
+  applyPartsWidth();
+  const library = document.querySelector("[data-library]");
+  if (library) {
+    filterLibrary(library);
+  }
+  watchSummary();
+  placeSummary();
+  hidePeek();
+}
+
+document.addEventListener("htmx:afterSettle", setUpBuilder);
+document.addEventListener("DOMContentLoaded", () => {
+  setUpBuilder();
+  restoreReturn();
+});
+document.addEventListener("htmx:afterSettle", restoreReturn);
 
 // ---- Drill diagram editor ------------------------------------------------------
 //

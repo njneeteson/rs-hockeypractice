@@ -27,6 +27,19 @@ str_enum! {
     }
 }
 
+str_enum! {
+    /// Optional parts of the practice builder that take up room on the screen;
+    /// each person can turn any of them off (My account).
+    pub enum BuilderExtra {
+        Focus => ("focus", "Development focus panel"),
+        Timeline => ("timeline", "Practice timeline"),
+        PartFocus => ("part-focus", "Development bar on each part"),
+        Sticky => ("sticky", "Summary that follows you down the page"),
+        FitCounts => ("fit-counts", "Where a picked drill fits, on each part"),
+        Peek => ("peek", "Larger drill preview on hover"),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct User {
     pub id: i64,
@@ -36,11 +49,18 @@ pub struct User {
     pub disabled: bool,
     pub must_change_password: bool,
     pub theme: Theme,
+    /// Builder extras this person has turned off.
+    pub hidden: Vec<BuilderExtra>,
     pub created_at: String,
     pub last_login: Option<String>,
 }
 
 impl User {
+    /// Whether a builder extra is on for this person.
+    pub fn shows(&self, extra: BuilderExtra) -> bool {
+        !self.hidden.contains(&extra)
+    }
+
     pub fn is_admin(&self) -> bool {
         self.role == Role::Admin
     }
@@ -93,7 +113,10 @@ CREATE INDEX sessions_user ON sessions(user_id);
 ";
 
 /// Ordered migrations; index + 1 is the resulting `user_version`. Append, never edit.
-const MIGRATIONS: &[&str] = &[V1];
+/// Builder extras each person has turned off (keys, comma-separated).
+const V2: &str = "ALTER TABLE users ADD COLUMN hidden_ui TEXT NOT NULL DEFAULT '';";
+
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
     let version: usize = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -107,9 +130,9 @@ fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
 }
 
 const USER_COLS: &str = "u.id, u.username, u.display_name, u.role, u.disabled, \
-    u.must_change_password, u.theme, u.created_at, u.last_login";
+    u.must_change_password, u.theme, u.created_at, u.last_login, u.hidden_ui";
 /// Number of columns in [`USER_COLS`]; extra selected columns start at this index.
-const USER_COL_COUNT: usize = 9;
+const USER_COL_COUNT: usize = 10;
 
 fn user_from_row(r: &Row<'_>) -> rusqlite::Result<User> {
     let role: String = r.get(3)?;
@@ -124,6 +147,11 @@ fn user_from_row(r: &Row<'_>) -> rusqlite::Result<User> {
         theme: Theme::from_key(&theme).unwrap_or(Theme::System),
         created_at: r.get(7)?,
         last_login: r.get(8)?,
+        hidden: r
+            .get::<_, String>(9)?
+            .split(',')
+            .filter_map(BuilderExtra::from_key)
+            .collect(),
     })
 }
 

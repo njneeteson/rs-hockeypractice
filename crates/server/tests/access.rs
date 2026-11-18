@@ -140,6 +140,15 @@ async fn other_peoples_things_are_not_found() {
             vec![("date", "2026-12-02".into()), ("ice", "half".into())],
         ),
         (format!("/practices/{p}/delete"), vec![]),
+        (format!("/practices/{p}/undo"), vec![]),
+        (
+            format!("/practices/{p}/restore"),
+            vec![("change", "1".into())],
+        ),
+        (
+            format!("/segments/{s}/head"),
+            vec![("title", "Mine".into()), ("minutes", "5".into())],
+        ),
         (
             format!("/practices/{p}/duplicate"),
             vec![("date", "2026-12-08".into())],

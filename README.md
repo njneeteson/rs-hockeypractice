@@ -69,14 +69,21 @@ Each person sees only their own drills and the teams they belong to.
 - **Practices** (`/practices`): a date, optional start time, a team, and full
   or half ice. A practice is a list of **parts**. Each part has a length, a
   title, an **ice layout**, an optional rotation time and notes. The builder
-  shows each part's rink with a legend beside it. Drag a drill from the
-  library onto a station it fits, click a drill and then a station, or pick
+  has two columns, with a draggable divider: the parts, each a card with
+  tabs (Rink, Stations, Settings, Page), and a scrolling library of drill
+  cards (diagram, development bar, filters including "closer to the
+  targets", and an edit link that comes back to the practice). Parts are
+  added anywhere with a **+**, reordered by dragging, and renamed in their
+  header; a timeline, an overview mode and a summary bar help with long
+  practices (each extra can be turned off under My account). Every change
+  to the parts is recorded, so any of them can be **undone** from the
+  history. Drag a drill from the library onto a station it fits, click a drill and then a station, or pick
   one from the station's list (it is placed as soon as it's picked). Changes
   update the part in place without reloading the page or losing your place;
   without JavaScript the same forms post and come back to the part. Each part
   can have a **goalie warm-up** (two nets with goalies and a coach shooting)
   at a corner or neutral-zone spot; drag it on the rink to put it anywhere
-  out of the drills' way, and turn it with ⟲ ⟳. *Preview the printed page*
+  out of the drills' way, and turn it with ⟲ ⟳. The **Page** tab
   shows that part's PDF page. Parts can be reordered and copied, and a whole
   practice can be copied to a new date.
 - **PDF** (*Download PDF*): one US Letter page per part, never more, so the

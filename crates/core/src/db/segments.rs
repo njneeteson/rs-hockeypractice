@@ -67,29 +67,63 @@ impl Database {
 
     /// Add a segment at the end of the practice.
     pub fn add_segment(&self, practice_id: i64, f: SegmentFields) -> anyhow::Result<i64> {
+        self.insert_segment(practice_id, f, None)
+    }
+
+    /// Add a segment before the one now at position `at` (0: first), or at
+    /// the end with `None` or a position past the end.
+    pub fn insert_segment(
+        &self,
+        practice_id: i64,
+        f: SegmentFields,
+        at: Option<usize>,
+    ) -> anyhow::Result<i64> {
         let f = f.validate()?;
         self.checked_layout(practice_id, f.layout)?;
-        let position: u32 = self.conn.query_row(
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM segments WHERE practice_id = ?1",
-            [practice_id],
-            |r| r.get(0),
-        )?;
-        self.conn.execute(
-            "INSERT INTO segments (practice_id, position, title, minutes, layout, rotation, notes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                practice_id,
-                position,
-                f.title,
-                f.minutes,
-                f.layout.key(),
-                f.rotation,
-                f.notes
-            ],
-        )?;
-        let id = self.conn.last_insert_rowid();
-        self.touch_practice(practice_id)?;
-        Ok(id)
+        self.atomic(|| {
+            let mut order: Vec<i64> = self
+                .segments(practice_id)?
+                .iter()
+                .map(|s| s.id)
+                .collect();
+            self.conn.execute(
+                "INSERT INTO segments (practice_id, position, title, minutes, layout, rotation, notes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    practice_id,
+                    order.len(),
+                    f.title,
+                    f.minutes,
+                    f.layout.key(),
+                    f.rotation,
+                    f.notes
+                ],
+            )?;
+            let id = self.conn.last_insert_rowid();
+            let at = at.unwrap_or(order.len()).min(order.len());
+            order.insert(at, id);
+            self.renumber(&order)?;
+            self.touch_practice(practice_id)?;
+            Ok(id)
+        })
+    }
+
+    /// Move a segment to position `to` (0: first; past the end: last).
+    pub fn move_segment_to(&self, id: i64, to: usize) -> anyhow::Result<()> {
+        let seg = self
+            .segment(id)?
+            .ok_or_else(|| anyhow::anyhow!("That page doesn't exist."))?;
+        let mut order: Vec<i64> = self
+            .segments(seg.practice_id)?
+            .iter()
+            .map(|s| s.id)
+            .filter(|s| *s != id)
+            .collect();
+        order.insert(to.min(order.len()), id);
+        self.atomic(|| {
+            self.renumber(&order)?;
+            self.touch_practice(seg.practice_id)
+        })
     }
 
     /// Save a segment. When the layout changes, drills that no longer fit
@@ -100,29 +134,29 @@ impl Database {
             .segment(id)?
             .ok_or_else(|| anyhow::anyhow!("That page doesn't exist."))?;
         self.checked_layout(seg.practice_id, f.layout)?;
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
+        self.atomic(|| {
+            self.conn.execute(
             "UPDATE segments SET title = ?2, minutes = ?3, layout = ?4, rotation = ?5, notes = ?6
              WHERE id = ?1",
             params![id, f.title, f.minutes, f.layout.key(), f.rotation, f.notes],
         )?;
-        let mut dropped = 0;
-        if f.layout != seg.layout {
-            let slots = f.layout.slots();
-            for st in &seg.stations {
-                let fits = match (slots.get(st.slot), self.drill(st.drill_id)?) {
-                    (Some(slot), Some(d)) => d.ice.fits_in(slot.size),
-                    _ => false,
-                };
-                if !fits {
-                    self.clear_station(id, st.slot)?;
-                    dropped += 1;
+            let mut dropped = 0;
+            if f.layout != seg.layout {
+                let slots = f.layout.slots();
+                for st in &seg.stations {
+                    let fits = match (slots.get(st.slot), self.drill(st.drill_id)?) {
+                        (Some(slot), Some(d)) => d.ice.fits_in(slot.size),
+                        _ => false,
+                    };
+                    if !fits {
+                        self.clear_station(id, st.slot)?;
+                        dropped += 1;
+                    }
                 }
             }
-        }
-        self.touch_practice(seg.practice_id)?;
-        tx.commit()?;
-        Ok(dropped)
+            self.touch_practice(seg.practice_id)?;
+            Ok(dropped)
+        })
     }
 
     /// Move a segment one place earlier (`up`) or later.
@@ -140,11 +174,11 @@ impl Database {
         let Some(j) = j else { return Ok(()) };
         let mut order: Vec<i64> = segs.iter().map(|s| s.id).collect();
         order.swap(i, j);
-        let tx = self.conn.unchecked_transaction()?;
-        self.renumber(&order)?;
-        self.touch_practice(seg.practice_id)?;
-        tx.commit()?;
-        Ok(())
+        self.atomic(|| {
+            self.renumber(&order)?;
+            self.touch_practice(seg.practice_id)?;
+            Ok(())
+        })
     }
 
     fn renumber(&self, order: &[i64]) -> anyhow::Result<()> {
@@ -161,18 +195,18 @@ impl Database {
         let seg = self
             .segment(id)?
             .ok_or_else(|| anyhow::anyhow!("That page doesn't exist."))?;
-        let tx = self.conn.unchecked_transaction()?;
-        self.conn
-            .execute("DELETE FROM segments WHERE id = ?1", [id])?;
-        let order: Vec<i64> = self
-            .segments(seg.practice_id)?
-            .iter()
-            .map(|s| s.id)
-            .collect();
-        self.renumber(&order)?;
-        self.touch_practice(seg.practice_id)?;
-        tx.commit()?;
-        Ok(())
+        self.atomic(|| {
+            self.conn
+                .execute("DELETE FROM segments WHERE id = ?1", [id])?;
+            let order: Vec<i64> = self
+                .segments(seg.practice_id)?
+                .iter()
+                .map(|s| s.id)
+                .collect();
+            self.renumber(&order)?;
+            self.touch_practice(seg.practice_id)?;
+            Ok(())
+        })
     }
 
     /// Copy a segment (with its drills) right after itself; returns the new id.
@@ -180,23 +214,23 @@ impl Database {
         let seg = self
             .segment(id)?
             .ok_or_else(|| anyhow::anyhow!("That page doesn't exist."))?;
-        let tx = self.conn.unchecked_transaction()?;
-        let new_id = self.copy_segment(&seg, seg.practice_id, seg.position + 1)?;
-        let mut order: Vec<i64> = self
-            .segments(seg.practice_id)?
-            .iter()
-            .map(|s| s.id)
-            .filter(|s| *s != new_id)
-            .collect();
-        let at = order
-            .iter()
-            .position(|s| *s == id)
-            .map_or(order.len(), |i| i + 1);
-        order.insert(at, new_id);
-        self.renumber(&order)?;
-        self.touch_practice(seg.practice_id)?;
-        tx.commit()?;
-        Ok(new_id)
+        self.atomic(|| {
+            let new_id = self.copy_segment(&seg, seg.practice_id, seg.position + 1)?;
+            let mut order: Vec<i64> = self
+                .segments(seg.practice_id)?
+                .iter()
+                .map(|s| s.id)
+                .filter(|s| *s != new_id)
+                .collect();
+            let at = order
+                .iter()
+                .position(|s| *s == id)
+                .map_or(order.len(), |i| i + 1);
+            order.insert(at, new_id);
+            self.renumber(&order)?;
+            self.touch_practice(seg.practice_id)?;
+            Ok(new_id)
+        })
     }
 
     /// Place (or with `None`, remove) a segment's goalie warm-up. It must be

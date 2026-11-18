@@ -19,6 +19,10 @@ ignore = [
     # parsing the two Noto Sans files compiled into the binary, never a
     # font from a user. Revisit when usvg/krilla move to `skrifa`.
     { id = "RUSTSEC-2026-0192", reason = "only parses our own embedded fonts; no maintained drop-in for usvg/krilla yet" },
+    # chrono is unmaintained (an unmaintained notice, not a vulnerability).
+    # The app uses it for dates and times of practices and history; rusqlite
+    # also depends on it here. Plan a move to `jiff` (or `time`).
+    { id = "RUSTSEC-2026-0543", reason = "no known vulnerability; migration to jiff planned" },
 ]
 
 [licenses]

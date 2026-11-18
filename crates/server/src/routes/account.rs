@@ -1,7 +1,7 @@
 //! "My account": name, theme, password, other sessions.
 
 use crate::auth::session::append_cookie;
-use crate::auth::store::Theme;
+use crate::auth::store::{BuilderExtra, Theme};
 use crate::auth::{password, start_session};
 use crate::error::AppResult;
 use crate::extract::Ctx;
@@ -25,6 +25,7 @@ pub fn routes() -> Router<Shared> {
             get(password_page).post(change_password),
         )
         .route("/account/sessions/revoke", post(revoke_other_sessions))
+        .route("/account/builder", post(save_builder))
 }
 
 fn password_form(cx: &Ctx) -> Markup {
@@ -68,6 +69,7 @@ async fn show(cx: Ctx) -> AppResult<Page> {
         (heading("My account", &signed_in_as, html! {}))
         div class="grid" {
             (card("Preferences", "", preferences_form(&cx)))
+            (card("Practice builder", "Extras that take room on the screen. Turn off any you don't use.", builder_form(&cx)))
             (card("Password", "Changing your password signs you out on every other device.",
                 password_form(&cx)))
             (card("Other devices", "", html! {
@@ -162,5 +164,39 @@ async fn revoke_other_sessions(cx: Ctx) -> AppResult<Response> {
         &cx.st,
         &cx.url("/account"),
         "Signed out of all other devices.",
+    ))
+}
+
+fn builder_form(cx: &Ctx) -> Markup {
+    html! {
+        form method="post" action=(cx.url("/account/builder")) class="form-stack" {
+            fieldset class="plain checks" aria-label="Show in the practice builder" {
+                @for e in BuilderExtra::ALL {
+                    label class="check" {
+                        input type="checkbox" name={ "show_" (e.key()) } value="1" checked[cx.user.shows(*e)];
+                        " " (e.label())
+                    }
+                }
+            }
+            div { button type="submit" class="primary" { "Save" } }
+        }
+    }
+}
+
+/// Ticked boxes arrive as `show_<key>=1`; the rest are turned off.
+async fn save_builder(
+    cx: Ctx,
+    Form(f): Form<std::collections::HashMap<String, String>>,
+) -> AppResult<Response> {
+    let hidden: Vec<BuilderExtra> = BuilderExtra::ALL
+        .iter()
+        .copied()
+        .filter(|e| !f.contains_key(&format!("show_{}", e.key())))
+        .collect();
+    cx.st.auth.set_hidden_extras(cx.user.id, &hidden)?;
+    Ok(flash::info(
+        &cx.st,
+        &cx.url("/account"),
+        "Builder settings saved.",
     ))
 }

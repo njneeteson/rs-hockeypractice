@@ -1,6 +1,7 @@
 //! Practices: the list, the details form, the builder (pages of drills on the
 //! ice) and the PDF download.
 
+use crate::auth::store::BuilderExtra;
 use crate::error::{AppError, AppResult};
 use crate::extract::{Ctx, PracticeCtx};
 use crate::flash;
@@ -10,7 +11,9 @@ use crate::state::Shared;
 use crate::views::components::{
     Num, Text, badge, card, empty, heading, legend_list, link_button, notice, stat_tile, svg, thead,
 };
-use crate::views::development::{GUIDE_PATH, composition_panel, split_bar, targets_source};
+use crate::views::development::{
+    GUIDE_PATH, composition_bar, composition_panel, split_bar, targets_source,
+};
 use crate::views::forms::{action_button, field};
 use crate::views::{Nav, Page, page};
 use axum::extract::{Path, Query};
@@ -20,8 +23,10 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use chrono::{Local, NaiveDate, NaiveTime};
 use localapp_core::board;
+use localapp_core::db::practice_history::Change;
 use localapp_core::db::{DrillFilter, PracticeSummary};
-use localapp_core::drill::{Drill, equipment_summary};
+use localapp_core::development::{Composition, Level, Verdict, closer_by};
+use localapp_core::drill::{Category, Drill, equipment_summary};
 use localapp_core::owner::{Library, MemberId};
 use localapp_core::practice::{
     GOALIE_WARMUP, GoalieWarmup, PlacedSlot, Plan, PracticeFields, Segment, Team,
@@ -29,6 +34,7 @@ use localapp_core::practice::{
 use localapp_core::rink::{End, IceSize, Layout, MAX_LANES, PracticeIce};
 use maud::{Markup, html};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -40,6 +46,8 @@ pub fn routes() -> Router<Shared> {
         .route("/practices/{id}/duplicate", post(duplicate))
         .route("/practices/{id}/plan.pdf", get(pdf))
         .route("/practices/{id}/preview/{sid}", get(preview))
+        .route("/practices/{id}/undo", post(undo))
+        .route("/practices/{id}/restore", post(restore))
 }
 
 // ---- List -----------------------------------------------------------------------
@@ -317,14 +325,18 @@ async fn update(pc: PracticeCtx, Form(f): Form<PracticeForm>) -> AppResult<Respo
     let new_team = f.new_team.clone();
     let result = cx
         .db(move |db| {
-            resolve_team(db, me, &mut fields, &new_team)?;
-            db.update_practice(id, fields)
+            // Recorded for undo when it changes the parts (a new ice size resets them).
+            db.tracked(id, me, || {
+                resolve_team(db, me, &mut fields, &new_team)?;
+                db.update_practice(id, fields).map(|reset| match reset {
+                    0 => "Practice saved.".to_string(),
+                    n => format!(
+                        "Practice saved. {n} part(s) didn't fit the new ice and were reset."
+                    ),
+                })
+            })
         })
-        .await
-        .map(|reset| match reset {
-            0 => "Practice saved.".to_string(),
-            n => format!("Practice saved. {n} part(s) didn't fit the new ice and were reset."),
-        });
+        .await;
     Ok(flash::report(
         &cx.st,
         &cx.url(&format!("/practices/{id}")),
@@ -686,18 +698,37 @@ fn segment_settings(cx: &Ctx, plan: &Plan, seg: &Segment) -> Markup {
     }
 }
 
-fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
+/// A part's card. Its main content is the rink, where drills are dropped; the
+/// stations' controls, the part's settings and the printed page are on other
+/// tabs (with JavaScript; without it they all show, one under the other).
+fn segment_card(cx: &Ctx, b: &Builder<'_>, i: usize) -> Markup {
+    let plan = b.plan;
     let seg = &plan.segments[i];
     let base = format!("/segments/{}", seg.id);
     let last = i + 1 == plan.segments.len();
     let eq = plan.segment_equipment(seg);
+    let placed = plan.slots(seg);
+    let filled = placed.iter().filter(|p| p.drill.is_some()).count();
+    let legend = board::segment_legend(plan, seg);
+    let tab = |key: &str, label: Markup| {
+        html! {
+            button type="button" role="tab" class="part-tab" data-tab=(key)
+                aria-selected=(if key == "rink" { "true" } else { "false" })
+                aria-controls={ "seg-" (seg.id) "-" (key) } { (label) }
+        }
+    };
     html! {
-        section class="card segment" id={ "seg-" (seg.id) } {
+        section class="card segment" id={ "seg-" (seg.id) } data-seg-id=(seg.id) data-index=(i)
+            data-tab="rink" aria-label=(seg.display_title()) {
             div class="segment-head" {
-                div {
-                    div class="muted small" { "Page " (i + 1) " · " (plan.time_range(i)) }
-                    h2 { (seg.display_title()) " " span class="pill" { (seg.minutes) " min" } }
-                }
+                span class="grip js-only" draggable="true" title="Drag to move this part"
+                    aria-hidden="true" { "⠿" }
+                div class="head-main" {
+                    div class="head-top" {
+                        span class="muted small" { "Page " (i + 1) " · " (plan.time_range(i)) }
+                    @if b.shows(BuilderExtra::FitCounts) {
+                        span class="fit-count small" aria-live="polite" {}
+                    }
                 div class="actions" {
                     @if i > 0 {
                         form method="post" action=(cx.url(&format!("{base}/move"))) class="inline" {
@@ -712,23 +743,39 @@ fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
                         }
                     }
                     (action_button(&cx.url(&format!("{base}/duplicate")), "Duplicate", "small", None))
-                    (action_button(&cx.url(&format!("{base}/delete")), "Delete", "small danger",
-                        Some("Delete this part of the practice?")))
+                    (action_button(&cx.url(&format!("{base}/delete")), "Delete", "small danger", None))
+                }
+                    }
+                    form method="post" action=(cx.url(&format!("{base}/head"))) class="head-form" {
+                        input type="text" name="title" value=(seg.title) maxlength="80"
+                            class="head-title" placeholder=(seg.display_title())
+                            aria-label="Title of this part" data-autosubmit;
+                        span class="pill head-minutes" {
+                            input type="number" name="minutes" value=(seg.minutes) min="1" max="180"
+                                required aria-label="Minutes" data-autosubmit;
+                            " min"
+                        }
+                        button type="submit" class="small no-js-only" { "Save" }
+                    }
+                    @if b.shows(BuilderExtra::PartFocus) {
+                        @let c = plan.segment_composition(seg);
+                        @if c.classified() > 0.0 { (composition_bar(&c)) }
+                    }
                 }
             }
-            div class="segment-body" {
-                @let legend = board::segment_legend(plan, seg);
-                div class="board-row" {
-                    div class="board-wrap" data-assign-url=(cx.url(&format!("{base}/stations/")))
-                        data-goalie-url=(cx.url(&format!("{base}/goalies"))) {
-                        (svg(board::segment_svg(plan, seg, true)))
-                    }
-                    @if !legend.is_empty() {
-                        aside class="board-legend" aria-label="Legend" {
-                            h3 { "Legend" }
-                            (legend_list(&legend))
-                        }
-                    }
+            div class="part-tabs js-only" role="tablist" aria-label="Part" {
+                (tab("rink", html! { "Rink" }))
+                (tab("stations", html! { "Stations " span class="muted" { (filled) "/" (placed.len()) } }))
+                (tab("settings", html! { "Settings" }))
+                (tab("page", html! { "Page" }))
+            }
+            div class="tab-panel" role="tabpanel" data-panel="rink" id={ "seg-" (seg.id) "-rink" } {
+                div class="board-wrap" data-assign-url=(cx.url(&format!("{base}/stations/")))
+                    data-goalie-url=(cx.url(&format!("{base}/goalies"))) {
+                    (svg(board::segment_svg(plan, seg, true)))
+                }
+                @if !legend.is_empty() {
+                    div class="board-legend compact" aria-label="Legend" { (legend_list(&legend)) }
                 }
                 div class="strip" {
                     span { strong { "Ice: " } (seg.layout.label()) }
@@ -737,33 +784,192 @@ fn segment_card(cx: &Ctx, plan: &Plan, i: usize, library: &[Drill]) -> Markup {
                     @if !eq.is_empty() { span { strong { "Equipment: " } (equipment_summary(&eq)) } }
                     @if !seg.notes.is_empty() { span { strong { "Notes: " } (seg.notes) } }
                 }
-                (station_list(cx, plan, seg, library))
+            }
+            div class="tab-panel" role="tabpanel" data-panel="stations" id={ "seg-" (seg.id) "-stations" } {
+                h3 class="no-js-only" { "Stations" }
+                (station_list(cx, plan, seg, b.library))
                 (goalie_row(cx, plan, seg))
             }
-            details class="segment-settings" data-keep={ "settings-" (seg.id) } open[seg.title.is_empty() && seg.stations.is_empty()] {
-                summary { "Part settings: title, minutes, layout, rotation, notes" }
+            div class="tab-panel" role="tabpanel" data-panel="settings" id={ "seg-" (seg.id) "-settings" } {
+                h3 class="no-js-only" { "Settings" }
                 (segment_settings(cx, plan, seg))
             }
-            details class="page-preview" data-keep={ "preview-" (seg.id) } {
-                summary { "Preview the printed page" }
-                // Lazy: only loaded once the preview is opened.
-                img src=(preview_url(cx, plan, seg)) loading="lazy" width="612" height="792"
+            div class="tab-panel" role="tabpanel" data-panel="page" id={ "seg-" (seg.id) "-page" } {
+                h3 class="no-js-only" { "Printed page" }
+                // Lazy: loaded only once the tab is shown (or scrolled to, without JavaScript).
+                img class="page-img" src=(preview_url(cx, plan, seg)) loading="lazy" width="612" height="792"
                     alt={ "Printed page for " (seg.display_title()) };
             }
         }
     }
 }
 
-fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce, team: i64) -> Markup {
-    let usable: Vec<&Drill> = library.iter().filter(|d| d.ice.fits(ice)).collect();
+/// A "+" that opens a small form to add a part at position `at`.
+fn add_between(cx: &Ctx, plan: &Plan, at: usize) -> Markup {
+    let n = plan.segments.len();
+    let open = n == 0;
+    let suggestion = if at == 0 && n == 0 { "Warm-up" } else { "" };
+    let label = match (at, n) {
+        (_, 0) => "Add the first part".to_string(),
+        (0, _) => "Add a part at the start".to_string(),
+        (a, n) if a >= n => "Add a part at the end".to_string(),
+        (a, _) => format!("Add a part after part {a}"),
+    };
     html! {
-        aside class="library card" data-library aria-label="Drill library" {
-            h2 { "Drills" }
-            p class="muted small js-only" {
-                "Drag a drill onto a station it fits on the rink (they light up), or click a drill and then a station."
+        details class="add-between" open[open] {
+            summary title=(label) aria-label=(label) {
+                span class="plus" aria-hidden="true" { "+" }
+                span class="add-label" { (label) }
             }
-            p class="muted small" {
-                "The team's drills, then yours: placing one of yours copies it into the team's library."
+            div class="card add-card" {
+                form method="post" action=(cx.url(&format!("/practices/{}/segments", plan.practice.id))) class="form-grid" {
+                    input type="hidden" name="at" value=(at);
+                    (field("Title", "", html! { input type="text" name="title" value=(suggestion) maxlength="80" placeholder="e.g. Skill stations"; }))
+                    (field("Minutes", "", html! { input type="number" name="minutes" value="10" min="1" max="180" required; }))
+                    (layout_fields(plan.practice.ice, Layout::default_for(plan.practice.ice)))
+                    div { button type="submit" class="primary" { "Add part" } }
+                }
+            }
+        }
+    }
+}
+
+/// Undo, the change history, and the view toggles, above the parts.
+fn builder_tools(cx: &Ctx, b: &Builder<'_>) -> Markup {
+    let base = format!("/practices/{}", b.plan.practice.id);
+    html! {
+        div class="builder-tools" {
+            @if let Some(last) = b.history.first() {
+                form method="post" action=(cx.url(&format!("{base}/undo"))) class="inline" {
+                    button type="submit" class="small" title={ "Undo: " (last.label) } {
+                        "↶ Undo"
+                    }
+                }
+                span class="muted small last-change" { "Last: " (last.label) }
+            } @else {
+                span class="muted small" { "Changes you make here can be undone." }
+            }
+            @if !b.history.is_empty() {
+                details class="history menu-like" data-keep="history" {
+                    summary class="btn small" { "History" }
+                    div class="history-list card" {
+                        p class="muted small" {
+                            "Go back to how the practice was before any change. Going back is a change "
+                            "too, so it can be undone."
+                        }
+                        ol {
+                            @for c in b.history {
+                                li {
+                                    div {
+                                        (c.label)
+                                        div class="muted small" {
+                                            (b.when(&c.at))
+                                            @if let Some(who) = c.member.and_then(|m| b.names.get(&m.0)) { " · " (who) }
+                                        }
+                                    }
+                                    form method="post" action=(cx.url(&format!("{base}/restore"))) class="inline" {
+                                        input type="hidden" name="change" value=(c.id);
+                                        button type="submit" class="small" { "Go back to before this" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            span class="spacer" {}
+            @if !b.plan.segments.is_empty() {
+                button type="button" class="small js-only" data-overview-toggle aria-pressed="false"
+                    title="Shrink every part to its header and rink" { "Overview" }
+            }
+            button type="button" class="small js-only library-toggle" data-library-toggle
+                aria-controls="library" aria-expanded="false" { "Drills" }
+        }
+    }
+}
+
+/// One block per part, sized by its minutes and coloured by its main
+/// development level. A link to the part; with JavaScript, drag to reorder.
+fn timeline(cx: &Ctx, plan: &Plan) -> Markup {
+    html! {
+        @if !plan.segments.is_empty() {
+            nav class="timeline" aria-label="Parts of the practice"
+                data-move-url=(cx.url("/segments/")) {
+                @for (i, seg) in plan.segments.iter().enumerate() {
+                    @let c = plan.segment_composition(seg);
+                    @let top = top_level(&c);
+                    a class={ "tl-block" @if let Some(l) = top { " lvl-" (l.key()) } @else { " tl-none" } }
+                        href={ "#seg-" (seg.id) } draggable="true" data-seg-id=(seg.id) data-index=(i)
+                        style={ "flex-grow:" (seg.minutes) }
+                        title={ (seg.display_title()) " · " (seg.minutes) " min"
+                            @if let Some(l) = top { " · mostly " (l.label().to_lowercase()) } } {
+                        span class="tl-title" { (seg.display_title()) }
+                        span class="tl-min" { (seg.minutes) "′" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The level a part spends most of its counted time on.
+fn top_level(c: &Composition) -> Option<Level> {
+    if c.classified() <= 0.0 {
+        return None;
+    }
+    Level::ALL
+        .iter()
+        .copied()
+        .max_by(|a, b| c.minutes_at(*a).total_cmp(&c.minutes_at(*b)))
+}
+
+/// A slim bar that stays at the top while scrolling through the parts: the
+/// length and each level's share against its target.
+fn sticky_summary(plan: &Plan, team: &Team) -> Markup {
+    let c = plan.composition();
+    let targets = team.targets();
+    html! {
+        div class="sticky-summary js-only" data-sticky-summary hidden {
+            strong { (plan.total_minutes()) " min" }
+            span class="muted" { (plan.segments.len()) " parts" }
+            @if c.classified() > 0.0 {
+                @for l in Level::ALL {
+                    @let pct = c.percent(*l).unwrap_or(0.0);
+                    @let verdict = targets.map(|t| Verdict::of(pct, t.get(*l)));
+                    span class={ "sum-level" @if let Some(v) = verdict { " " (v.key()) } }
+                        title={ (l.label()) @if let Some(t) = targets { ", target " (t.get(*l)) "%" } } {
+                        span class={ "swatch lvl-" (l.key()) } {}
+                        (format!("{pct:.0}")) "%"
+                        @match verdict {
+                            Some(Verdict::Under) => { span class="verdict under" { "▼" } }
+                            Some(Verdict::Over) => { span class="verdict over" { "▲" } }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The drill library beside the parts: a scroll box of drill cards to drag
+/// onto the rinks (or click, then click a station). On narrow screens it's a
+/// drawer.
+fn library_panel(cx: &Ctx, b: &Builder<'_>) -> Markup {
+    let ice = b.plan.practice.ice;
+    let usable: Vec<&Drill> = b.library.iter().filter(|d| d.ice.fits(ice)).collect();
+    let categories: Vec<Category> = Category::ALL
+        .iter()
+        .copied()
+        .filter(|c| usable.iter().any(|d| d.category == *c))
+        .collect();
+    let team = b.plan.practice.team_id;
+    html! {
+        aside class="library" id="library" data-library aria-label="Drill library" {
+            div class="library-head" {
+                h2 { "Drills" }
+                a class="small" href=(cx.url(&format!("/drills/new?lib={}&from={}", Library::Team(team).key(), b.plan.practice.id))) { "+ New" }
+                button type="button" class="small js-only library-close" data-library-toggle aria-label="Close the drill library" { "×" }
             }
             div class="library-filters" {
                 input type="search" data-library-search placeholder="Filter drills" aria-label="Filter drills";
@@ -775,52 +981,146 @@ fn library_panel(cx: &Ctx, library: &[Drill], ice: PracticeIce, team: i64) -> Ma
                         }
                     }
                 }
-            }
-            @if usable.is_empty() {
-                (empty("No drills fit this ice yet."))
-            }
-            ul class="library-list" {
-                @for d in &usable {
-                    li class="drill-chip" draggable="true" tabindex="0" data-drill-id=(d.id) data-size=(d.ice.key())
-                        data-name=(d.name.to_lowercase()) aria-label={ (d.name) ", " (d.ice.label()) } {
-                        span class="chip-name" { (d.name) }
-                        (split_bar(d.focus))
-                        span class="muted small" {
-                            (d.ice.label()) " · " (d.minutes) " min"
-                            @if d.library.team().is_none() { " · yours" }
-                        }
+                select data-library-category aria-label="Category" {
+                    option value="" { "All categories" }
+                    @for c in &categories { option value=(c.key()) { (c.label()) } }
+                }
+                select data-library-level aria-label="Main development level" {
+                    option value="" { "Any level" }
+                    @for l in Level::ALL { option value=(l.key()) { "Mostly " (l.label().to_lowercase()) } }
+                }
+                @if b.team.targets().is_some() {
+                    label class="check small" title="Drills that bring this practice's development focus closer to the team's targets, best first" {
+                        input type="checkbox" data-library-closer;
+                        " Closer to the targets"
                     }
                 }
             }
-            a class="small" href=(cx.url(&format!("/drills/new?lib={}", Library::Team(team).key()))) { "+ New team drill" }
+            p class="muted small js-only library-hint" {
+                "Drag a drill onto a station it fits (they light up), or click a drill, then a station. "
+                "Your own drills are copied into the team's library when placed."
+            }
+            div class="library-scroll" { (library_cards(cx, b, &usable)) }
         }
     }
 }
 
-fn add_segment_form(cx: &Ctx, plan: &Plan) -> Markup {
-    let n = plan.segments.len();
-    let suggestion = match n {
-        0 => "Warm-up",
-        _ => "",
-    };
-    html! {
-        form method="post" action=(cx.url(&format!("/practices/{}/segments", plan.practice.id))) class="form-grid" {
-            (field("Title", "", html! { input type="text" name="title" value=(suggestion) maxlength="80" placeholder="e.g. Skill stations"; }))
-            (field("Minutes", "", html! { input type="number" name="minutes" value="10" min="1" max="180" required; }))
-            (layout_fields(plan.practice.ice, Layout::default_for(plan.practice.ice)))
-            div { button type="submit" class="primary" { "Add part" } }
+/// The drill cards (swapped after every change, so "used" counts and the
+/// development suggestions stay current).
+fn library_cards(cx: &Ctx, b: &Builder<'_>, usable: &[&Drill]) -> Markup {
+    let plan = b.plan;
+    let mut used: HashMap<i64, usize> = HashMap::new();
+    for seg in &plan.segments {
+        for st in &seg.stations {
+            *used.entry(st.drill_id).or_default() += 1;
         }
+    }
+    let composition = plan.composition();
+    let targets = b.team.targets();
+    let from = plan.practice.id;
+    html! {
+        div id="library-cards" {
+            @if usable.is_empty() {
+                (empty("No drills fit this ice yet."))
+            }
+            ul class="library-grid" {
+                @for (order, d) in usable.iter().enumerate() {
+                    @let n = used.get(&d.id).copied().unwrap_or(0);
+                    @let top = d.focus.map(|s| s.top());
+                    @let help = match (targets, d.focus) {
+                        (Some(t), Some(s)) => Some(closer_by(&composition, t, s, d.minutes as f32)),
+                        _ => None,
+                    };
+                    li class="drill-chip drill-tile" draggable="true" tabindex="0" data-drill-id=(d.id)
+                        data-size=(d.ice.key()) data-name=(d.name.to_lowercase())
+                        data-category=(d.category.key()) data-level=[top.map(|l| l.key())]
+                        data-help=[help.map(|h| format!("{h:.1}"))] data-order=(order)
+                        aria-label={ (d.name) ", " (d.ice.label()) } {
+                        div class="tile-thumb" { (svg(board::drill_svg(d.ice, &d.diagram, &d.name, ""))) }
+                        div class="tile-body" {
+                            div class="tile-title" {
+                                strong { (d.name) }
+                                a class="tile-edit" href=(cx.url(&format!("/drills/{}?from={from}", d.id)))
+                                    title={ "Edit “" (d.name) "”" } aria-label={ "Edit " (d.name) } { "✎" }
+                            }
+                            (split_bar(d.focus))
+                            div class="muted small" {
+                                (d.category.label()) " · " (d.ice.label())
+                                @if d.library.team().is_none() { " · yours" }
+                            }
+                            @if n > 0 { span class="used small" { "used ×" (n) } }
+                        }
+                        @let points = d.key_points();
+                        @if !points.is_empty() {
+                            ul class="peek-points" hidden { @for p in points { li { (p) } } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Everything the builder's pieces draw from.
+struct Builder<'a> {
+    plan: &'a Plan,
+    library: &'a [Drill],
+    team: &'a Team,
+    history: &'a [Change],
+    /// Names of the people in the history, by user id.
+    names: &'a HashMap<i64, String>,
+    hidden: &'a [BuilderExtra],
+}
+
+impl Builder<'_> {
+    fn shows(&self, e: BuilderExtra) -> bool {
+        !self.hidden.contains(&e)
+    }
+
+    /// A history time (UTC from the database) in local time.
+    fn when(&self, at: &str) -> String {
+        chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S")
+            .map(|t| {
+                t.and_utc()
+                    .with_timezone(&Local)
+                    .format("%b %-d, %-I:%M %p")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| at.to_string())
     }
 }
 
 async fn show(pc: PracticeCtx) -> AppResult<Page> {
     let cx = pc.cx.clone();
     let (id, team, me) = (pc.practice.id, pc.practice.team_id, cx.member());
-    let (plan, library, team) = cx
-        .db(move |db| Ok((db.plan(id)?, builder_library(db, team, me)?, db.team(team)?)))
+    let (plan, library, team, history) = cx
+        .db(move |db| {
+            Ok((
+                db.plan(id)?,
+                builder_library(db, team, me)?,
+                db.team(team)?,
+                db.history(id, HISTORY_SHOWN)?,
+            ))
+        })
         .await?;
     let team = team.ok_or(AppError::NotFound)?;
     let plan = plan.ok_or(AppError::NotFound)?;
+    let mut names = HashMap::new();
+    for m in history.iter().filter_map(|c| c.member) {
+        if let std::collections::hash_map::Entry::Vacant(e) = names.entry(m.0)
+            && let Some(u) = cx.st.auth.user(m.0)?
+        {
+            e.insert(u.name().to_string());
+        }
+    }
+    let b = Builder {
+        plan: &plan,
+        library: &library,
+        team: &team,
+        history: &history,
+        names: &names,
+        hidden: &cx.user.hidden,
+    };
     let p = &plan.practice;
     let base = format!("/practices/{id}");
     let intro = format!(
@@ -833,6 +1133,11 @@ async fn show(pc: PracticeCtx) -> AppResult<Page> {
         p.ice.label()
     );
     let eq = plan.equipment();
+    let extras: Vec<&str> = BuilderExtra::ALL
+        .iter()
+        .filter(|e| b.shows(**e))
+        .map(|e| e.key())
+        .collect();
     let body = html! {
         div id="practice-head" {
             (heading(p.display_title(), &intro, html! {
@@ -848,28 +1153,81 @@ async fn show(pc: PracticeCtx) -> AppResult<Page> {
             (stat_tile("Equipment", html! { (eq.iter().map(|(_, q)| q).sum::<u32>()) " items" },
                 &equipment_summary(&eq), "The most any one part needs, item by item."))
         }
-        div id="practice-focus" { (focus_card(&cx, &plan, &team)) }
+        div id="practice-focus" {
+            @if b.shows(BuilderExtra::Focus) { (focus_card(&cx, &plan, &team)) }
+        }
+        div id="practice-timeline" {
+            @if b.shows(BuilderExtra::Timeline) { (timeline(&cx, &plan)) }
+        }
+        div id="practice-sticky" {
+            @if b.shows(BuilderExtra::Sticky) { (sticky_summary(&plan, &team)) }
+        }
         @if library.is_empty() { (empty_library_note(&cx)) }
-        div class="builder" {
+        div class="builder" data-builder data-extras=(extras.join(" ")) {
             // With htmx, every change in the parts (placing a drill, notes,
-            // settings, reordering) swaps just this column and the summary
-            // above it, keeping the scroll position. Without it, the forms post
-            // and redirect back as usual.
+            // settings, reordering) swaps just this column, the summary above
+            // it and the drill cards, keeping the scroll position. Without it,
+            // the forms post and redirect back as usual.
             div class="builder-main" id="builder-main" hx-target="#builder-main" hx-select="#builder-main"
                 hx-swap="outerHTML show:none" hx-push-url="false"
-                hx-select-oob="#practice-head,#practice-tiles,#practice-focus,#toasts" {
-                @if plan.segments.is_empty() {
-                    (notice("info", html! { "This practice has no parts yet. Each part is a block of time and becomes one page of the plan." }))
+                hx-select-oob="#practice-head,#practice-tiles,#practice-focus,#practice-timeline,#practice-sticky,#library-cards,#toasts" {
+                (builder_tools(&cx, &b))
+                div class="parts" data-move-url=(cx.url("/segments/")) {
+                    @if plan.segments.is_empty() {
+                        (notice("info", html! { "This practice has no parts yet. Each part is a block of time and becomes one page of the plan." }))
+                    } @else {
+                        (add_between(&cx, &plan, 0))
+                    }
+                    @for i in 0..plan.segments.len() {
+                        (segment_card(&cx, &b, i))
+                        (add_between(&cx, &plan, i + 1))
+                    }
+                    @if plan.segments.is_empty() { (add_between(&cx, &plan, 0)) }
                 }
-                @for i in 0..plan.segments.len() {
-                    (segment_card(&cx, &plan, i, &library))
-                }
-                (card("Add a part", "Each part is a block of time with its own page and rink diagram.", add_segment_form(&cx, &plan)))
             }
-            (library_panel(&cx, &library, p.ice, p.team_id))
+            div class="divider js-only" role="separator" aria-orientation="vertical" tabindex="0"
+                aria-label="Resize the drill library (arrow keys)" data-divider {}
+            (library_panel(&cx, &b))
         }
     };
     Ok(page(&cx, Nav::Practices, p.display_title(), body))
+}
+
+/// How many recent changes the History menu lists.
+const HISTORY_SHOWN: usize = 30;
+
+#[derive(Deserialize)]
+struct RestoreForm {
+    change: String,
+}
+
+/// Undo the practice's latest change.
+async fn undo(pc: PracticeCtx) -> AppResult<Response> {
+    let (cx, id, me) = (&pc.cx, pc.practice.id, pc.cx.member());
+    let result = cx
+        .db(move |db| {
+            db.undo(id, me)
+                .map(|m| m.unwrap_or_else(|| "Nothing to undo.".to_string()))
+        })
+        .await;
+    Ok(flash::report(
+        &cx.st,
+        &cx.url(&format!("/practices/{id}")),
+        result,
+    ))
+}
+
+/// Go back to how the practice was before one of its changes. The change is
+/// looked up within this practice only.
+async fn restore(pc: PracticeCtx, Form(f): Form<RestoreForm>) -> AppResult<Response> {
+    let (cx, id, me) = (&pc.cx, pc.practice.id, pc.cx.member());
+    let change: i64 = form::number(&f.change, "Change")?;
+    let result = cx.db(move |db| db.restore(id, change, me)).await;
+    Ok(flash::report(
+        &cx.st,
+        &cx.url(&format!("/practices/{id}")),
+        result,
+    ))
 }
 
 /// The drills the builder offers: the team's, then the user's own (placing

@@ -159,8 +159,23 @@ ALTER TABLE teams ADD COLUMN age TEXT NOT NULL DEFAULT '';
 ALTER TABLE teams ADD COLUMN targets TEXT;
 "#;
 
+/// V8: a practice's change history, for undo. Each row is what the practice's
+/// parts looked like just before a change (`snapshot`, JSON; see
+/// `db/practice_history.rs`), with the change's description.
+const V8: &str = r#"
+CREATE TABLE practice_history (
+    id          INTEGER PRIMARY KEY,
+    practice_id INTEGER NOT NULL REFERENCES practices(id) ON DELETE CASCADE,
+    member_id   INTEGER,
+    label       TEXT NOT NULL,
+    snapshot    TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX practice_history_practice ON practice_history(practice_id, id);
+"#;
+
 /// Ordered migrations; index + 1 is the resulting schema version.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
 
 /// Versions whose migration rebuilds a table that others reference, so it
 /// runs with foreign keys off (SQLite's documented way to change a table's

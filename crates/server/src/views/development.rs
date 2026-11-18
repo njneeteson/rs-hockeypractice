@@ -28,6 +28,27 @@ pub fn split_bar(split: Option<Split>) -> Markup {
     }
 }
 
+/// A split bar for counted time (a part's or a practice's), by each level's share.
+pub fn composition_bar(c: &Composition) -> Markup {
+    let shares: Vec<(Level, f32)> = Level::ALL
+        .iter()
+        .map(|l| (*l, c.percent(*l).unwrap_or(0.0)))
+        .filter(|(_, p)| *p > 0.0)
+        .collect();
+    let text = shares
+        .iter()
+        .map(|(l, p)| format!("{} {p:.0}%", l.label()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    html! {
+        span class="split-bar" role="img" aria-label={ "Development focus: " (text) } title=(text) {
+            @for (l, p) in &shares {
+                span class={ "lvl lvl-" (l.key()) } style={ "width:" (format!("{p:.1}")) "%" } {}
+            }
+        }
+    }
+}
+
 /// "Technical skills 60%, Individual tactics 40%"
 pub fn describe(s: Split) -> String {
     Level::ALL

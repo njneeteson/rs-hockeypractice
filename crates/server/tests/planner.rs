@@ -216,7 +216,7 @@ async fn practices_are_built_and_printed() {
     let sid = id_from(r.redirect(), "#seg-");
     let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
     assert!(page.contains("Part added."));
-    assert_eq!(page.matches("class=\"drop-slot\"").count(), 3);
+    assert_eq!(page.matches("class=\"drop-slot").count(), 3);
 
     // Place drills with the no-JS forms; a size mismatch is refused.
     let place = |slot: usize| url(&format!("/segments/{sid}/stations/{slot}"));
@@ -419,7 +419,7 @@ async fn new_pages_render_and_stay_under_the_base_path() {
     .await;
     let page = app.get(&url(&format!("/practices/{pid}"))).await.body;
     assert_eq!(
-        page.matches("class=\"drop-slot\"").count(),
+        page.matches("class=\"drop-slot").count(),
         5,
         "four end-zone lanes and the neutral zone"
     );

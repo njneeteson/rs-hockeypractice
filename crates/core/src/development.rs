@@ -264,6 +264,28 @@ impl Verdict {
     }
 }
 
+/// How many percentage points closer to `targets` a practice with
+/// composition `c` gets by adding `minutes` of a drill split `drill`
+/// (positive: closer; negative: further). Distance is the sum, over the
+/// levels, of how far each share is from its target (0 to 200). A practice
+/// with nothing counted yet starts at the furthest, so a drill scores by
+/// how well its own split matches the targets.
+pub fn closer_by(c: &Composition, targets: Split, drill: Split, minutes: f32) -> f32 {
+    let distance = |c: &Composition| -> f32 {
+        Level::ALL
+            .iter()
+            .map(|l| {
+                c.percent(*l)
+                    .map(|p| (p - f32::from(targets.get(*l))).abs())
+            })
+            .sum::<Option<f32>>()
+            .unwrap_or(200.0)
+    };
+    let mut after = *c;
+    after.add(Some(drill), minutes);
+    distance(c) - distance(&after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +329,20 @@ mod tests {
         assert_eq!(Verdict::of(40.0, 50), Verdict::Under);
         assert_eq!(Verdict::of(60.0, 50), Verdict::Over);
         assert_eq!(Verdict::of(3.0, 0), Verdict::Over, "none at all expected");
+    }
+    #[test]
+    fn drills_that_bring_a_practice_closer_to_its_targets() {
+        let u9 = AgeDivision::U9.hockey_canada().unwrap();
+        let mut c = Composition::default();
+        c.add(Some(Split::TECHNICAL), 40.0);
+        let tactics = Split::new([0, 0, 100, 0, 0]).unwrap();
+        assert!(closer_by(&c, u9, tactics, 5.0) > 0.0, "the missing level");
+        assert!(
+            closer_by(&c, u9, Split::TECHNICAL, 5.0) <= 0.0,
+            "more of the same"
+        );
+        // Nothing counted yet: the closer a drill's own split, the better.
+        let empty = Composition::default();
+        assert!(closer_by(&empty, u9, u9, 10.0) > closer_by(&empty, u9, tactics, 10.0));
     }
 }

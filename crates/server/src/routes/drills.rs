@@ -80,6 +80,15 @@ fn library_url(cx: &Ctx, lib: Library) -> String {
     }
 }
 
+/// Where a drill form goes back to: the practice it was opened from (`from`,
+/// a practice id), else the library. With the back link's label.
+fn back_to(cx: &Ctx, from: Option<i64>, lib: Library) -> (String, &'static str) {
+    match from {
+        Some(p) => (cx.url(&format!("/practices/{p}")), "← Back to the practice"),
+        None => (library_url(cx, lib), "← Drill library"),
+    }
+}
+
 fn library_hint(lib: Library) -> &'static str {
     match lib {
         Library::Personal(_) => {
@@ -339,6 +348,7 @@ fn drill_form(
     back: &str,
     new_in: Option<Library>,
     guide: &str,
+    from: Option<i64>,
 ) -> Markup {
     let qty = |e: Equipment| {
         f.equipment
@@ -351,6 +361,9 @@ fn drill_form(
         form method="post" action=(action) class="drill-form" data-drill-form {
             @if let Some(lib) = new_in {
                 input type="hidden" name="lib" value=(lib.key());
+            }
+            @if let Some(p) = from {
+                input type="hidden" name="from" value=(p);
             }
             (card("Drill", "", html! {
                 div class="form-grid" {
@@ -426,6 +439,8 @@ struct NewQuery {
     ice: String,
     #[serde(default)]
     lib: String,
+    #[serde(default)]
+    from: String,
 }
 
 fn blank(ice: IceSize) -> DrillFields {
@@ -445,10 +460,11 @@ fn blank(ice: IceSize) -> DrillFields {
 async fn new_page(cx: Ctx, Query(q): Query<NewQuery>) -> AppResult<Page> {
     let (lib, name) = library_param(&cx, &q.lib).await?;
     let f = blank(IceSize::from_key(&q.ice).unwrap_or(IceSize::HALF));
-    let back = library_url(&cx, lib);
+    let from = form::opt_id(&q.from);
+    let (back, back_label) = back_to(&cx, from, lib);
     let body = html! {
-        (heading("New drill", &format!("In {name}."), link_button(&back, "← Drill library", false)))
-        (drill_form(&cx.url("/drills"), &f, 0, &back, Some(lib), &cx.url(GUIDE_PATH)))
+        (heading("New drill", &format!("In {name}."), link_button(&back, back_label, false)))
+        (drill_form(&cx.url("/drills"), &f, 0, &back, Some(lib), &cx.url(GUIDE_PATH), from))
     };
     Ok(page(&cx, Nav::Drills, "New drill", body))
 }
@@ -513,13 +529,14 @@ struct Rejected<'a> {
     back: &'a str,
     used: u32,
     new_in: Option<Library>,
+    from: Option<i64>,
 }
 
 fn rejected(cx: &Ctx, r: Rejected<'_>, f: &DrillFields, error: &str) -> Response {
     let body = html! {
-        (heading(r.title, "", link_button(r.back, "← Drill library", false)))
+        (heading(r.title, "", link_button(r.back, "← Back", false)))
         (notice("error", html! { "Not saved: " (error) }))
-        (drill_form(r.action, f, r.used, r.back, r.new_in, &cx.url(GUIDE_PATH)))
+        (drill_form(r.action, f, r.used, r.back, r.new_in, &cx.url(GUIDE_PATH), r.from))
     };
     (
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -538,6 +555,7 @@ fn field_value<'a>(pairs: &'a [(String, String)], key: &str) -> &'a str {
 
 async fn create(cx: Ctx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<Response> {
     let (lib, _) = library_param(&cx, field_value(&pairs, "lib")).await?;
+    let from = form::opt_id(field_value(&pairs, "from"));
     let (f, focus_error) = parse(&pairs)?;
     let save = f.clone();
     let result = match focus_error {
@@ -547,24 +565,35 @@ async fn create(cx: Ctx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<
     match result {
         Ok(id) => Ok(flash::info(
             &cx.st,
-            &cx.url(&format!("/drills/{id}")),
+            &match from {
+                Some(p) => cx.url(&format!("/practices/{p}")),
+                None => cx.url(&format!("/drills/{id}")),
+            },
             "Drill saved.",
         )),
         Err(e) => {
-            let back = library_url(&cx, lib);
+            let (back, _) = back_to(&cx, from, lib);
             let r = Rejected {
                 title: "New drill",
                 action: &cx.url("/drills"),
                 back: &back,
                 used: 0,
                 new_in: Some(lib),
+                from,
             };
             Ok(rejected(&cx, r, &f, &format!("{e:#}")))
         }
     }
 }
 
-async fn edit_page(dc: DrillCtx) -> AppResult<Page> {
+#[derive(Deserialize, Default)]
+struct FromQuery {
+    #[serde(default)]
+    from: String,
+}
+
+async fn edit_page(dc: DrillCtx, Query(q): Query<FromQuery>) -> AppResult<Page> {
+    let from = form::opt_id(&q.from);
     let d = &dc.drill;
     let id = d.id;
     let used = dc.db(move |db| db.drill_usage(id)).await?;
@@ -576,7 +605,7 @@ async fn edit_page(dc: DrillCtx) -> AppResult<Page> {
         .unwrap_or_default();
     let elsewhere: Vec<&(Library, String)> = libs.iter().filter(|(l, _)| *l != d.library).collect();
     let base = format!("/drills/{id}");
-    let back = library_url(&dc, d.library);
+    let (back, back_label) = back_to(&dc, from, d.library);
     let mut sub = format!(
         "In {here} · {} · {} · last changed {}",
         d.ice.label(),
@@ -588,7 +617,7 @@ async fn edit_page(dc: DrillCtx) -> AppResult<Page> {
     }
     let body = html! {
         (heading(&d.name, &sub, html! {
-            a class="btn" href=(back) { "← Drill library" }
+            a class="btn" href=(back) { (back_label) }
             (action_button(&dc.url(&format!("{base}/duplicate")), "Duplicate", "", None))
             @if used == 0 {
                 (action_button(&dc.url(&format!("{base}/delete")), "Delete", "danger",
@@ -614,13 +643,14 @@ async fn edit_page(dc: DrillCtx) -> AppResult<Page> {
                 strong { "Development" } " and save."
             }))
         }
-        (drill_form(&dc.url(&base), &d.fields(), used, &back, None, &dc.url(GUIDE_PATH)))
+        (drill_form(&dc.url(&base), &d.fields(), used, &back, None, &dc.url(GUIDE_PATH), from))
     };
     Ok(page(&dc, Nav::Drills, &d.name, body))
 }
 
 async fn update(dc: DrillCtx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<Response> {
     let id = dc.drill.id;
+    let from = form::opt_id(field_value(&pairs, "from"));
     let (f, focus_error) = parse(&pairs)?;
     let save = f.clone();
     let result = dc
@@ -636,17 +666,21 @@ async fn update(dc: DrillCtx, Form(pairs): Form<Vec<(String, String)>>) -> AppRe
     match result {
         (Ok(()), _) => Ok(flash::info(
             &dc.st,
-            &dc.url(&format!("/drills/{id}")),
+            &match from {
+                Some(p) => dc.url(&format!("/practices/{p}")),
+                None => dc.url(&format!("/drills/{id}")),
+            },
             "Drill saved.",
         )),
         (Err(e), used) => {
-            let back = library_url(&dc, dc.drill.library);
+            let (back, _) = back_to(&dc, from, dc.drill.library);
             let r = Rejected {
                 title: "Edit drill",
                 action: &dc.url(&format!("/drills/{id}")),
                 back: &back,
                 used,
                 new_in: None,
+                from,
             };
             Ok(rejected(&dc, r, &f, &format!("{e:#}")))
         }

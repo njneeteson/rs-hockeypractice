@@ -166,6 +166,16 @@ impl AuthDb {
         Ok(())
     }
 
+    /// Which builder extras a person has turned off.
+    pub fn set_hidden_extras(&self, id: i64, hidden: &[super::BuilderExtra]) -> anyhow::Result<()> {
+        let keys: Vec<&str> = hidden.iter().map(|e| e.key()).collect();
+        self.conn().execute(
+            "UPDATE users SET hidden_ui=?1 WHERE id=?2",
+            params![keys.join(","), id],
+        )?;
+        Ok(())
+    }
+
     pub fn record_login(&self, id: i64) -> anyhow::Result<()> {
         self.conn().execute(
             "UPDATE users SET last_login=?1 WHERE id=?2",

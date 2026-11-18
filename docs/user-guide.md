@@ -195,18 +195,60 @@ every part shows its clock time (5:38–6:02 PM); without one, elapsed time
 
 ![A new practice](images/05-new-practice.png)
 
-The practice page is the builder: the parts on the left, the drills on the
-right: the team's first, then your own (marked "yours"). Placing one of
-yours copies it into the team's library, so everyone in the team sees it
-and later changes to your own drill don't change the practice. The tiles at the top add up the length, the number of pages, and
-the equipment to bring (the most any one part needs).
+The practice page is the builder. At the top: the length, the number of
+pages, the equipment to bring (the most any one part needs), the
+**Development focus** panel and the **timeline**. Below them are two columns:
+the parts on the left and the drill library on the right.
 
 ![The practice builder](images/06-builder.png)
 
+- **The library** is a scroll box of drill cards: name, a small diagram, the
+  coloured development bar, category and the ice it needs. The team's drills
+  come first, then your own (marked "yours"). Placing one of yours copies it
+  into the team's library, so everyone in the team sees it and later changes
+  to your own drill don't change the practice. Filter by name, size, category
+  or main level. **Closer to the targets** shows only the drills that would
+  bring this practice nearer the team's development targets, best first.
+  "used ×2" means the drill is already in the practice twice. Hover over a
+  card for a larger diagram and its key points.
+- **✎** on a card opens the drill editor. Saving (or **Back to the
+  practice**) brings you back where you were.
+- **The divider** between the columns can be dragged to give the parts or the
+  library more room (or focused and moved with the arrow keys; double-click it
+  for half and half). Each side keeps enough room to stay readable, and the
+  library shows two or three cards across.
+- **The timeline** has a block for each part, as wide as its minutes and
+  coloured by the level it spends most time on. Click a block to jump to that
+  part; drag blocks to reorder the parts.
+- **Overview** shrinks every part to its title and rink, side by side, to see
+  the whole practice at once. Click it again for the full cards.
+- Once you scroll past the summary, a slim bar stays at the top with the
+  length and each level's share (▲ ▼ when off target).
+
+![The drill library beside the parts](images/21-library.png)
+
+On a narrower screen the library is a drawer: **Drills** opens it, and
+picking a drill closes it so you can tap a station. Under **My account →
+Practice builder** you can turn off any of these extras you don't use: the
+development panel, the timeline, the bar on each part, the summary bar, the
+"fits" counts and the hover preview.
+
+### Undo and history
+
+Every change to the parts (adding, moving, renaming, placing or removing a
+drill, notes, the goalie warm-up) can be undone, at any time and by anyone in
+the team. **↶ Undo** above the parts takes back the latest one. **History**
+lists the recent changes, newest first, with who made them; **Go back to
+before this** puts the practice back as it was before that change. Going
+back is itself a change, so it can be undone too.
+
+![Undo and the history of a practice](images/22-history.png)
+
 ## Parts and ice layouts
 
-Add parts with **Add a part** at the bottom: a title, minutes, and how the ice
-is split.
+Each part is a card. Add one with the **+** between the cards (or at the
+start or the end): a small form asks for a title, minutes and how the ice is
+split, and the part goes exactly there.
 
 ![Adding a part, with the ice split at the red line](images/07-add-part.png)
 
@@ -228,11 +270,21 @@ So half ice holds up to five stations, and full ice up to nine. In the sample,
 "Skill stations" splits both ends into end zone + neutral zone (three
 stations), and "Puck skills" is three lanes on the left and two on the right.
 
-Each part has **Part settings** to change the title, minutes, layout, a
-**rotation** time (minutes per station; the strip then reads "Rotate every
-8 min (3 stations, 24 min round)"), and **notes** printed on the page. If you
-change the layout, drills that no longer fit are taken off. Parts can be moved
-up and down with ↑ ↓, duplicated, or deleted.
+A part's card has four tabs:
+
+- **Rink**: the rink with its drills, where you drop drills; under it the
+  legend and the strip (layout, rotation, equipment and notes).
+- **Stations**: a card for each station (see below) and the goalie warm-up.
+- **Settings**: title, minutes, layout, a **rotation** time (minutes per
+  station; the strip then reads "Rotate every 8 min (3 stations, 24 min
+  round)"), and **notes** printed on the page. If you change the layout,
+  drills that no longer fit are taken off.
+- **Page**: the printed page, exactly as it prints.
+
+The title and minutes can also be changed right in the card's header: click
+them, type, and press Enter (or click elsewhere). Drag a card by its **⠿**
+grip to move it (or use ↑ ↓); **Duplicate** and **Delete** are beside them.
+The bar under the title shows that part's development split.
 
 On the plan, every drill in a part shows the time it actually gets there,
 never its own suggested minutes: the rotation time when groups rotate between
@@ -241,11 +293,9 @@ in a 3-minute part shows 3 minutes.
 
 ## Putting drills on the ice
 
-![A part with three stations: rink, legend, strip and stations](images/08-stations-part.png)
+![A part with three stations on its Rink tab](images/08-stations-part.png)
 
-Each part shows its rink with its drills, a legend of the symbols they use, a
-strip with the layout, rotation, equipment and notes, and a card for each
-station. When a part has two or more drills they are numbered 1, 2, 3… on the
+When a part has two or more drills they are numbered 1, 2, 3… on the
 rink, on the station cards and on the printed page. Only zones with a drill
 get a number, counted in order, so leaving a zone empty doesn't leave a gap.
 On the printed page an empty zone is simply blank. There are three ways to
@@ -253,16 +303,19 @@ place a drill:
 
 - **Drag** it from the library onto the rink.
 - **Click** it in the library, then click a station.
-- **Pick** it from the station's list. It is placed as soon as you pick it.
+- **Pick** it from the station's list on the **Stations** tab. It is placed
+  as soon as you pick it.
 
-When you drag or click a drill, the stations it fits light up. Here a
+When you drag or click a drill, the stations it fits light up, and each
+part's header says how many empty stations it fits ("fits 2 empty"); parts
+where it fits nowhere are dimmed. Here a
 quarter-ice drill was picked: both right-hand lanes are wide enough, the three
 narrower left-hand lanes are not.
 
 ![The stations a quarter-ice drill fits, highlighted](images/10-drop-targets.png)
 
-Each station card shows the drill, its printed text (**Text on the printed
-page**), a note, and its controls:
+On the **Stations** tab, each station card shows the drill, its printed text
+(**Text on the printed page**), a note, and its controls:
 
 ![One station: drill, note, flip and remove](images/12-station.png)
 
@@ -281,9 +334,9 @@ place.
 ## Goalie warm-up
 
 When none of a part's drills need the goalies, they can warm up on the side:
-two nets with a goalie in each and a coach shooting. Under the stations,
-choose a spot for **Goalie warm-up**: a corner at either end, or along the
-boards in the neutral zone.
+two nets with a goalie in each and a coach shooting. On the **Stations** tab,
+under the stations, choose a spot for **Goalie warm-up**: a corner at either
+end, or along the boards in the neutral zone.
 
 ![The goalie warm-up controls](images/11-goalie-row.png)
 
@@ -335,9 +388,8 @@ if their association asks for something different.
 ## Printing
 
 **Download PDF** at the top of a practice gives one US Letter page per part.
-To check a single page first, open **Preview the printed page** at the bottom
-of a part. It shows that page exactly as it prints, and it updates as you
-make changes.
+To check a single page first, open the part's **Page** tab. It shows that
+page exactly as it prints, and it updates as you make changes.
 
 ![The printed page for "Skill stations"](images/13-page-preview.png)
 
@@ -359,9 +411,9 @@ happens, shorten the instructions in the library, or split the part in two.
 
 ## On a phone, and in dark mode
 
-The app works on a phone: the library moves below the parts and the legend
-below the rink. It follows your device's light or dark setting (or choose one
-under **My account**). The printed page always stays white.
+The app works on a phone: the parts take the whole width and the library
+opens as a drawer with **Drills**. It follows your device's light or dark
+setting (or choose one under **My account**). The printed page always stays white.
 
 | Dark mode | Phone |
 |---|---|

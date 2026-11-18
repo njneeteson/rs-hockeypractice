@@ -133,7 +133,8 @@ pub fn segment_inner(plan: &Plan, seg: &Segment, interactive: bool) -> String {
             let a = p.slot.area;
             let _ = write!(
                 out,
-                r#"<rect class="drop-slot" data-slot="{}" data-size="{}" data-accepts="{}" x="{}" y="{}" width="{}" height="{}" fill="transparent"><title>{} · {}</title></rect>"#,
+                r#"<rect class="drop-slot{}" data-slot="{}" data-size="{}" data-accepts="{}" x="{}" y="{}" width="{}" height="{}" fill="transparent"><title>{} · {}</title></rect>"#,
+                if p.drill.is_none() { " empty" } else { "" },
                 p.index,
                 p.slot.size.key(),
                 p.slot

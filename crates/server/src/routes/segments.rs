@@ -18,6 +18,7 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/practices/{id}/segments", post(add))
         .route("/segments/{sid}", post(update))
+        .route("/segments/{sid}/head", post(head))
         .route("/segments/{sid}/move", post(move_segment))
         .route("/segments/{sid}/duplicate", post(duplicate))
         .route("/segments/{sid}/delete", post(delete))
@@ -46,6 +47,15 @@ struct SegmentForm {
     rotation: String,
     #[serde(default)]
     notes: String,
+}
+
+/// Adding a part: its fields, and where it goes (`at`, a position; empty: at the end).
+#[derive(Deserialize)]
+struct AddForm {
+    #[serde(flatten)]
+    fields: SegmentForm,
+    #[serde(default)]
+    at: String,
 }
 
 impl SegmentForm {
@@ -90,82 +100,154 @@ fn builder(cx: &Ctx, practice_id: i64, segment_id: Option<i64>) -> String {
     }
 }
 
-async fn add(pc: PracticeCtx, Form(f): Form<SegmentForm>) -> AppResult<Response> {
-    let (cx, id) = (&pc.cx, pc.practice.id);
-    let fields = f.fields()?;
-    match cx.db(move |db| db.add_segment(id, fields)).await {
-        Ok(sid) => Ok(flash::info(
-            &cx.st,
-            &builder(cx, id, Some(sid)),
-            "Part added.",
-        )),
-        Err(e) => Ok(flash::error(
-            &cx.st,
-            &builder(cx, id, None),
-            format!("{e:#}"),
-        )),
+/// Run a change to a practice's parts, recorded in its history (for undo),
+/// and report it as a toast on the builder.
+async fn change<T>(
+    cx: &Ctx,
+    practice_id: i64,
+    segment_id: Option<i64>,
+    f: impl FnOnce(&localapp_core::db::Database) -> anyhow::Result<T> + Send + 'static,
+) -> Response
+where
+    T: std::fmt::Display + Send + 'static,
+{
+    let me = cx.member();
+    let result = cx.db(move |db| db.tracked(practice_id, me, || f(db))).await;
+    flash::report(
+        &cx.st,
+        &builder(cx, practice_id, segment_id),
+        result.map(|m| m.to_string()),
+    )
+}
+
+/// A new part's id, with the message for the coach.
+struct Added(i64, &'static str);
+
+impl std::fmt::Display for Added {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.1)
     }
+}
+
+async fn add(pc: PracticeCtx, Form(f): Form<AddForm>) -> AppResult<Response> {
+    let (cx, id, me) = (&pc.cx, pc.practice.id, pc.cx.member());
+    let fields = f.fields.fields()?;
+    let at = match f.at.trim() {
+        "" => None,
+        v => Some(form::number::<usize>(v, "Position")?),
+    };
+    let result = cx
+        .db(move |db| {
+            db.tracked(id, me, || {
+                db.insert_segment(id, fields, at)
+                    .map(|sid| Added(sid, "Part added."))
+            })
+        })
+        .await;
+    Ok(match result {
+        Ok(Added(sid, msg)) => flash::info(&cx.st, &builder(cx, id, Some(sid)), msg),
+        Err(e) => flash::error(&cx.st, &builder(cx, id, None), format!("{e:#}")),
+    })
 }
 
 async fn update(sc: SegmentCtx, Form(f): Form<SegmentForm>) -> AppResult<Response> {
     let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let fields = f.fields()?;
-    let result =
-        cx.db(move |db| db.update_segment(sid, fields))
-            .await
-            .map(|dropped| match dropped {
-                0 => "Part saved.".to_string(),
-                n => {
-                    format!("Part saved. {n} drill(s) didn't fit the new layout and were removed.")
-                }
-            });
-    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
+    Ok(change(cx, pid, Some(sid), move |db| {
+        db.update_segment(sid, fields).map(|dropped| match dropped {
+            0 => "Part saved.".to_string(),
+            n => format!("Part saved. {n} drill(s) didn't fit the new layout and were removed."),
+        })
+    })
+    .await)
+}
+
+#[derive(Deserialize)]
+struct HeadForm {
+    #[serde(default)]
+    title: String,
+    minutes: String,
+}
+
+/// The title and minutes, edited in the part's header.
+async fn head(sc: SegmentCtx, Form(f): Form<HeadForm>) -> AppResult<Response> {
+    let (cx, seg) = (&sc.cx, sc.seg.clone());
+    let fields = SegmentFields {
+        title: f.title,
+        minutes: form::number(&f.minutes, "Minutes")?,
+        layout: seg.layout,
+        rotation: seg.rotation,
+        notes: seg.notes.clone(),
+    };
+    let what = match (
+        fields.title.trim() == seg.title,
+        fields.minutes == seg.minutes,
+    ) {
+        (true, false) => format!("{}: {} min.", seg.display_title(), fields.minutes),
+        (false, true) => "Part renamed.".to_string(),
+        _ => "Part saved.".to_string(),
+    };
+    Ok(change(cx, seg.practice_id, Some(seg.id), move |db| {
+        db.update_segment(seg.id, fields).map(|_| what)
+    })
+    .await)
 }
 
 #[derive(Deserialize)]
 struct MoveForm {
+    /// "up" or "down"; or else `to`.
+    #[serde(default)]
     dir: String,
+    /// The position to move to (0: first).
+    #[serde(default)]
+    to: String,
 }
 
 async fn move_segment(sc: SegmentCtx, Form(f): Form<MoveForm>) -> AppResult<Response> {
     let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
-    let up = match f.dir.as_str() {
-        "up" => true,
-        "down" => false,
-        other => {
+    let (up, to) = match (f.dir.as_str(), f.to.trim()) {
+        ("up", _) => (Some(true), None),
+        ("down", _) => (Some(false), None),
+        ("", to) if !to.is_empty() => (None, Some(form::number::<usize>(to, "Position")?)),
+        (other, _) => {
             return Err(AppError::bad_request(format!(
                 "Unknown direction “{other}”."
             )));
         }
     };
-    let result = cx
-        .db(move |db| db.move_segment(sid, up).map(|()| "Part moved."))
-        .await;
-    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
+    Ok(change(cx, pid, Some(sid), move |db| {
+        match (up, to) {
+            (Some(up), _) => db.move_segment(sid, up),
+            (None, to) => db.move_segment_to(sid, to.unwrap_or_default()),
+        }
+        .map(|()| "Part moved.")
+    })
+    .await)
 }
 
 async fn duplicate(sc: SegmentCtx) -> AppResult<Response> {
-    let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
-    match cx.db(move |db| db.duplicate_segment(sid)).await {
-        Ok(new) => Ok(flash::info(
-            &cx.st,
-            &builder(cx, pid, Some(new)),
-            "Part copied.",
-        )),
-        Err(e) => Ok(flash::error(
-            &cx.st,
-            &builder(cx, pid, Some(sid)),
-            format!("{e:#}"),
-        )),
-    }
+    let (cx, sid, pid, me) = (&sc.cx, sc.seg.id, sc.seg.practice_id, sc.cx.member());
+    let result = cx
+        .db(move |db| {
+            db.tracked(pid, me, || {
+                db.duplicate_segment(sid).map(|n| Added(n, "Part copied."))
+            })
+        })
+        .await;
+    Ok(match result {
+        Ok(Added(new, msg)) => flash::info(&cx.st, &builder(cx, pid, Some(new)), msg),
+        Err(e) => flash::error(&cx.st, &builder(cx, pid, Some(sid)), format!("{e:#}")),
+    })
 }
 
 async fn delete(sc: SegmentCtx) -> AppResult<Response> {
     let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
-    let result = cx
-        .db(move |db| db.delete_segment(sid).map(|()| "Part deleted."))
-        .await;
-    Ok(flash::report(&cx.st, &builder(cx, pid, None), result))
+    let title = sc.seg.display_title();
+    Ok(change(cx, pid, None, move |db| {
+        db.delete_segment(sid)
+            .map(|()| format!("Deleted “{title}”."))
+    })
+    .await)
 }
 
 #[derive(Deserialize)]
@@ -182,38 +264,39 @@ async fn place(
 ) -> AppResult<Response> {
     let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let me = cx.member();
-    let to = builder(cx, pid, Some(sid));
     let Some(drill_id) = form::opt_id(&f.drill_id) else {
-        return Ok(flash::error(&cx.st, &to, "Choose a drill first."));
+        return Ok(flash::error(
+            &cx.st,
+            &builder(cx, pid, Some(sid)),
+            "Choose a drill first.",
+        ));
     };
-    let result = cx
-        .db(move |db| {
-            // Any drill the user may use: theirs, or one of their teams'.
-            let usable = match db.drill(drill_id)? {
-                Some(d) => db.can_use_library(me, d.library)?,
-                None => false,
-            };
-            anyhow::ensure!(usable, "That drill doesn't exist.");
-            let placed = db.place_drill(sid, slot, drill_id, &f.note)?;
-            let name = db.drill(placed)?.map(|d| d.name).unwrap_or_default();
-            // Name the zone ("the right half, top lane"): station numbers
-            // count only the zones with drills, so they shift as drills come and go.
-            let slots = db
-                .segment(sid)?
-                .map(|s| s.layout.slots())
-                .unwrap_or_default();
-            let zone = match slots.get(slot) {
-                Some(s) if slots.len() > 1 => s.name.to_lowercase(),
-                _ => String::new(),
-            };
-            Ok(if zone.is_empty() {
-                format!("Placed “{name}”.")
-            } else {
-                format!("Placed “{name}” in the {zone}.")
-            })
+    Ok(change(cx, pid, Some(sid), move |db| {
+        // Any drill the user may use: theirs, or one of their teams'.
+        let usable = match db.drill(drill_id)? {
+            Some(d) => db.can_use_library(me, d.library)?,
+            None => false,
+        };
+        anyhow::ensure!(usable, "That drill doesn't exist.");
+        let placed = db.place_drill(sid, slot, drill_id, &f.note)?;
+        let name = db.drill(placed)?.map(|d| d.name).unwrap_or_default();
+        // Name the zone ("the right half, top lane"): station numbers
+        // count only the zones with drills, so they shift as drills come and go.
+        let slots = db
+            .segment(sid)?
+            .map(|s| s.layout.slots())
+            .unwrap_or_default();
+        let zone = match slots.get(slot) {
+            Some(s) if slots.len() > 1 => s.name.to_lowercase(),
+            _ => String::new(),
+        };
+        Ok(if zone.is_empty() {
+            format!("Placed “{name}”.")
+        } else {
+            format!("Placed “{name}” in the {zone}.")
         })
-        .await;
-    Ok(flash::report(&cx.st, &to, result))
+    })
+    .await)
 }
 
 #[derive(Deserialize)]
@@ -228,13 +311,11 @@ async fn note(
     Form(f): Form<NoteForm>,
 ) -> AppResult<Response> {
     let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
-    let result = cx
-        .db(move |db| {
-            db.set_station_note(sid, slot, &f.note)
-                .map(|()| "Note saved.")
-        })
-        .await;
-    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
+    Ok(change(cx, pid, Some(sid), move |db| {
+        db.set_station_note(sid, slot, &f.note)
+            .map(|()| "Note saved.")
+    })
+    .await)
 }
 
 #[derive(Deserialize)]
@@ -301,10 +382,10 @@ async fn goalies(sc: SegmentCtx, Form(f): Form<GoalieForm>) -> AppResult<Respons
             }
         }
     };
-    let result = cx
-        .db(move |db| db.set_goalie_warmup(sid, place).map(|()| msg))
-        .await;
-    Ok(flash::report(&cx.st, &to, result))
+    Ok(change(cx, seg.practice_id, Some(sid), move |db| {
+        db.set_goalie_warmup(sid, place).map(|()| msg)
+    })
+    .await)
 }
 
 #[derive(Deserialize)]
@@ -321,27 +402,30 @@ async fn flip(
 ) -> AppResult<Response> {
     let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
     let on = f.flip == "1";
-    let result = cx
-        .db(move |db| {
-            db.set_station_flip(sid, slot, on).map(|()| {
-                if on {
-                    "Drill flipped top to bottom."
-                } else {
-                    "Drill shown as drawn."
-                }
-            })
+    Ok(change(cx, pid, Some(sid), move |db| {
+        db.set_station_flip(sid, slot, on).map(|()| {
+            if on {
+                "Drill flipped top to bottom."
+            } else {
+                "Drill shown as drawn."
+            }
         })
-        .await;
-    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
+    })
+    .await)
 }
 
 async fn clear(sc: SegmentCtx, Path((_, slot)): Path<(i64, usize)>) -> AppResult<Response> {
     let (cx, sid, pid) = (&sc.cx, sc.seg.id, sc.seg.practice_id);
-    let result = cx
-        .db(move |db| {
-            db.clear_station(sid, slot)
-                .map(|()| "Drill removed from the station.")
+    let name = sc.seg.station(slot).map(|st| st.drill_id);
+    Ok(change(cx, pid, Some(sid), move |db| {
+        let name = match name {
+            Some(d) => db.drill(d)?.map(|d| d.name),
+            None => None,
+        };
+        db.clear_station(sid, slot).map(|()| match name {
+            Some(n) => format!("Removed “{n}”."),
+            None => "Drill removed from the station.".to_string(),
         })
-        .await;
-    Ok(flash::report(&cx.st, &builder(cx, pid, Some(sid)), result))
+    })
+    .await)
 }

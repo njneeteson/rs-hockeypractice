@@ -42,9 +42,18 @@ overview and layout.
   (text size, diagram height). Drill text is one unsplit block per drill in
   a single column. Don't reintroduce continuation pages or text columns.
 - The practice builder's forms live inside `#builder-main`, which htmx swaps
-  in place (plus `#practice-head`, `#practice-tiles`, `#toasts` out of band).
-  New builder controls go inside it so they keep the scroll position;
-  `<details>` that should stay open across swaps get `data-keep`.
+  in place (plus `#practice-head`, `#practice-tiles`, `#practice-focus`,
+  `#practice-timeline`, `#practice-sticky`, `#library-cards`, `#toasts` out of
+  band). New builder controls go inside it so they keep the scroll position;
+  `<details>` that should stay open across swaps get `data-keep`. A part's
+  tabs are `data-panel` blocks that all show without JavaScript.
+- Every change to a practice's parts runs through `Database::tracked` (in
+  `segments.rs` routes, the `change` helper), which records the parts as they
+  were for undo; the returned message is the history label. New part or
+  station actions must go through it too.
+- Builder extras that take room on the screen are `BuilderExtra` values a
+  person can turn off (My account); render them only when `shows()` says so,
+  and list new ones there.
 
 ## Conventions
 
