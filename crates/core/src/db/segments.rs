@@ -6,12 +6,17 @@ use crate::rink::Layout;
 use rusqlite::{OptionalExtension, Row, params};
 
 const SELECT: &str = "SELECT id, practice_id, position, title, minutes, layout, rotation, notes,
-    goalie_x, goalie_y, goalie_rot FROM segments";
+    goalie_x, goalie_y, goalie_rot, goalie_nets FROM segments";
 
 fn row(r: &Row<'_>) -> rusqlite::Result<Segment> {
     let layout: String = r.get(5)?;
     let goalies = match (r.get(8)?, r.get(9)?, r.get(10)?) {
-        (Some(x), Some(y), Some(rot)) => Some(GoalieWarmup { x, y, rot }),
+        (Some(x), Some(y), Some(rot)) => Some(GoalieWarmup {
+            x,
+            y,
+            rot,
+            nets: r.get(11)?,
+        }),
         _ => None,
     };
     Ok(Segment {
@@ -249,8 +254,15 @@ impl Database {
 
     fn write_goalies(&self, id: i64, g: Option<GoalieWarmup>) -> anyhow::Result<()> {
         self.conn.execute(
-            "UPDATE segments SET goalie_x = ?2, goalie_y = ?3, goalie_rot = ?4 WHERE id = ?1",
-            params![id, g.map(|g| g.x), g.map(|g| g.y), g.map(|g| g.rot)],
+            "UPDATE segments SET goalie_x = ?2, goalie_y = ?3, goalie_rot = ?4, goalie_nets = ?5
+             WHERE id = ?1",
+            params![
+                id,
+                g.map(|g| g.x),
+                g.map(|g| g.y),
+                g.map(|g| g.rot),
+                g.map_or(GoalieWarmup::NETS, |g| g.nets)
+            ],
         )?;
         Ok(())
     }
@@ -330,12 +342,14 @@ mod tests {
             x: 150.0,
             y: 40.0,
             rot: 0.0,
+            nets: 2,
         };
         assert!(db.set_goalie_warmup(s, Some(off)).is_err());
         let turned = GoalieWarmup {
             x: 50.2,
             y: 40.0,
             rot: 270.0,
+            nets: 2,
         };
         db.set_goalie_warmup(s, Some(turned)).unwrap();
         let g = db.segment(s).unwrap().unwrap().goalies.unwrap();
@@ -358,6 +372,30 @@ mod tests {
         assert!(legend.iter().any(|e| e.label.starts_with("Goalie")));
         let eq = plan.segment_equipment(&plan.segments[0]);
         assert!(eq.contains(&(crate::drill::Equipment::Nets, 2)));
+
+        // One net: one goalie, still at its preset spot; three nets refused.
+        let one = GoalieWarmup { nets: 1, ..corner };
+        db.set_goalie_warmup(s, Some(one)).unwrap();
+        let g = db.segment(s).unwrap().unwrap().goalies.unwrap();
+        assert_eq!(
+            (g.nets, g.preset_key(PracticeIce::Half)),
+            (1, Some("left-top"))
+        );
+        let d = g.diagram();
+        let count = |f: fn(&crate::diagram::Item) -> bool| d.items.iter().filter(|i| f(i)).count();
+        assert_eq!(count(|i| matches!(i, crate::diagram::Item::Net { .. })), 1);
+        assert_eq!(
+            count(|i| matches!(i, crate::diagram::Item::Player { label, .. } if label == "G")),
+            1
+        );
+        assert_eq!(g.describe(), "warm-up with a coach shooting (1 net)");
+        let plan = db.plan(p).unwrap().unwrap();
+        let eq = plan.segment_equipment(&plan.segments[0]);
+        assert!(eq.contains(&(crate::drill::Equipment::Nets, 1)));
+        assert!(
+            db.set_goalie_warmup(s, Some(GoalieWarmup { nets: 3, ..g }))
+                .is_err()
+        );
 
         db.set_goalie_warmup(s, None).unwrap();
         assert_eq!(db.segment(s).unwrap().unwrap().goalies, None);

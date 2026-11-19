@@ -81,7 +81,7 @@ Each person sees only their own drills and the teams they belong to.
   one from the station's list (it is placed as soon as it's picked). Changes
   update the part in place without reloading the page or losing your place;
   without JavaScript the same forms post and come back to the part. Each part
-  can have a **goalie warm-up** (two nets with goalies and a coach shooting)
+  can have a **goalie warm-up** (one or two nets with goalies and a coach shooting)
   at a corner or neutral-zone spot; drag it on the rink to put it anywhere
   out of the drills' way, and turn it with ⟲ ⟳. The **Page** tab
   shows that part's PDF page. Parts can be reordered and copied, and a whole

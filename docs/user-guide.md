@@ -337,9 +337,10 @@ place.
 ## Goalie warm-up
 
 When none of a part's drills need the goalies, they can warm up on the side:
-two nets with a goalie in each and a coach shooting. On the **Stations** tab,
-under the stations, choose a spot for **Goalie warm-up**: a corner at either
-end, or along the boards in the neutral zone.
+two nets with a goalie in each (or one net and one goalie) and a coach
+shooting. On the **Stations** tab, under the stations, choose a spot for
+**Goalie warm-up**: a corner at either end, or along the boards in the neutral
+zone.
 
 ![The goalie warm-up controls](images/11-goalie-row.png)
 
@@ -352,7 +353,11 @@ the nets face the right way:
 - or press **R** (Shift+R the other way) while you're dragging it;
 - or use the ⟲ ⟳ buttons (45° at a time).
 
-Its two nets are added to the equipment, and it appears on the printed page.
+With only one goalie, choose **1 net, 1 goalie** in the box next to the spot:
+the warm-up shrinks to a single net facing the coach. It stays where it is, and
+moving it or picking another spot keeps it at one net.
+
+Its nets are added to the equipment, and it appears on the printed page.
 
 In "Puck skills" the lanes on the right run along the boards, so the warm-up
 sits in the open strip between them, facing the end boards:

@@ -426,14 +426,14 @@ document.addEventListener("htmx:beforeSwap", () => {
 
 // ---- Practice builder: editing a drill and coming back ---------------------------
 //
-// The ✎ on a drill card opens the drill editor, which returns to the practice
+// The ✎ on a drill card (or a placed drill's name) opens the drill editor, which returns to the practice
 // after saving or cancelling. Remember where the page and the library were
 // scrolled, to put them back.
 
 const RETURN_KEY = "builder-return";
 
 document.addEventListener("click", (event) => {
-  const edit = event.target.closest(".tile-edit");
+  const edit = event.target.closest(".tile-edit, .station-edit");
   if (!edit) {
     return;
   }

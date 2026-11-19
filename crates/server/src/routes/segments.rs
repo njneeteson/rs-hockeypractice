@@ -334,6 +334,9 @@ struct GoalieForm {
     /// The angle it faces after being dragged (degrees); with `x` and `y`.
     #[serde(default)]
     rot: String,
+    /// How many nets (1 or 2), changed on its own.
+    #[serde(default)]
+    nets: String,
 }
 
 /// Place, move, turn or remove the part's goalie warm-up.
@@ -352,7 +355,24 @@ async fn goalies(sc: SegmentCtx, Form(f): Form<GoalieForm>) -> AppResult<Respons
             .map_err(|_| AppError::BadRequest("Not a number.".into()))
     };
     let current = seg.goalies;
-    let (place, msg) = if let Some(t) = num(&f.turn)? {
+    // A move or a new spot keeps the nets it has.
+    let nets = current.map_or(GoalieWarmup::NETS, |g| g.nets);
+    let (place, msg) = if !f.nets.trim().is_empty() {
+        let Some(g) = current else {
+            return Ok(flash::error(&cx.st, &to, "Place the goalie warm-up first."));
+        };
+        let nets = match f.nets.trim() {
+            "1" => 1,
+            "2" => 2,
+            _ => return Err(AppError::BadRequest("One or two nets.".into())),
+        };
+        let msg = if nets == 1 {
+            "Goalie warm-up: one net."
+        } else {
+            "Goalie warm-up: two nets."
+        };
+        (Some(GoalieWarmup { nets, ..g }), msg)
+    } else if let Some(t) = num(&f.turn)? {
         let Some(g) = current else {
             return Ok(flash::error(&cx.st, &to, "Place the goalie warm-up first."));
         };
@@ -367,7 +387,7 @@ async fn goalies(sc: SegmentCtx, Form(f): Form<GoalieForm>) -> AppResult<Respons
             Some(g) if (g.x, g.y) == (x, y) => "Goalie warm-up turned.",
             _ => "Goalie warm-up moved.",
         };
-        (Some(GoalieWarmup { x, y, rot }), msg)
+        (Some(GoalieWarmup { x, y, rot, nets }), msg)
     } else {
         match f.spot.as_str() {
             "" | "none" => (None, "Goalie warm-up removed."),
@@ -376,7 +396,7 @@ async fn goalies(sc: SegmentCtx, Form(f): Form<GoalieForm>) -> AppResult<Respons
                 let g = GoalieWarmup::presets(ice)
                     .into_iter()
                     .find(|(k, _, _)| *k == key)
-                    .map(|(_, _, g)| g)
+                    .map(|(_, _, g)| GoalieWarmup { nets, ..g })
                     .ok_or_else(|| AppError::BadRequest("Unknown spot.".into()))?;
                 (Some(g), "Goalie warm-up placed.")
             }

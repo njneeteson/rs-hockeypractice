@@ -44,7 +44,14 @@ struct SegmentSnap {
     notes: String,
     /// x, y, rot.
     goalies: Option<[f32; 3]>,
+    /// The warm-up's nets (snapshots from before one-net warm-ups have two).
+    #[serde(default = "two_nets")]
+    goalie_nets: u8,
     stations: Vec<StationSnap>,
+}
+
+fn two_nets() -> u8 {
+    GoalieWarmup::NETS
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,6 +78,7 @@ impl Database {
                 rotation: s.rotation,
                 notes: s.notes,
                 goalies: s.goalies.map(|g| [g.x, g.y, g.rot]),
+                goalie_nets: s.goalies.map_or(GoalieWarmup::NETS, |g| g.nets),
                 stations: s
                     .stations
                     .into_iter()
@@ -226,13 +234,14 @@ impl Database {
                 g.goalies.map(|v| v[0]),
                 g.goalies.map(|v| v[1]),
                 g.goalies.map(|v| v[2]),
+                g.goalie_nets,
             ];
             let sid = match owner {
                 Some(pid) if pid == practice_id => {
                     self.conn.execute(
                         "UPDATE segments SET position = ?1, title = ?2, minutes = ?3, layout = ?4,
-                         rotation = ?5, notes = ?6, goalie_x = ?7, goalie_y = ?8, goalie_rot = ?9
-                         WHERE id = ?10",
+                         rotation = ?5, notes = ?6, goalie_x = ?7, goalie_y = ?8, goalie_rot = ?9,
+                         goalie_nets = ?10 WHERE id = ?11",
                         rusqlite::params_from_iter(fields.iter().copied().chain([&g.id as _])),
                     )?;
                     g.id
@@ -243,8 +252,8 @@ impl Database {
                     let id = if other.is_none() { Some(g.id) } else { None };
                     self.conn.execute(
                         "INSERT INTO segments (position, title, minutes, layout, rotation, notes,
-                         goalie_x, goalie_y, goalie_rot, practice_id, id)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                         goalie_x, goalie_y, goalie_rot, goalie_nets, practice_id, id)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         rusqlite::params_from_iter(
                             fields.iter().copied().chain([&practice_id as _, &id as _]),
                         ),
@@ -274,7 +283,8 @@ impl Database {
             }
             if let Some([x, y, rot]) = g.goalies {
                 // Re-check it's on the ice (the ice may have changed back and forth).
-                let ok = GoalieWarmup { x, y, rot }.validate(ice).is_ok();
+                let nets = g.goalie_nets;
+                let ok = GoalieWarmup { x, y, rot, nets }.validate(ice).is_ok();
                 if !ok {
                     self.conn.execute(
                         "UPDATE segments SET goalie_x = NULL, goalie_y = NULL, goalie_rot = NULL

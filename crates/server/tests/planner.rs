@@ -615,6 +615,26 @@ async fn goalie_warmup_and_page_preview() {
     // Off the half-ice sheet: refused.
     let r = app.post(&goalies, &[("x", "150"), ("y", "40")]).await;
     assert!(app.get(r.redirect()).await.body.contains("practice's ice"));
+
+    // Down to one net and one goalie; moving it and picking a spot keep that.
+    let r = app.post(&goalies, &[("nets", "1")]).await;
+    let page = app.get(r.redirect()).await.body;
+    assert!(page.contains("Goalie warm-up: one net."));
+    assert!(page.contains("coach shooting (1 net)") && page.contains("Nets 1"));
+    assert!(page.contains(r#"<option value="1" selected>1 net, 1 goalie"#));
+    app.post(&goalies, &[("x", "30"), ("y", "30")]).await;
+    app.post(&goalies, &[("spot", "left-bottom")]).await;
+    let seg = app.st.db(move |db| db.segment(sid)).await.unwrap().unwrap();
+    let g = seg.goalies.unwrap();
+    assert_eq!((g.nets, g.x, g.y), (1, 20.0, 65.0));
+    let r = app.post(&goalies, &[("nets", "3")]).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    // Back to two nets, then undone: one net again (the history keeps it).
+    app.post(&goalies, &[("nets", "2")]).await;
+    app.post(&url(&format!("/practices/{pid}/undo")), &[]).await;
+    let seg = app.st.db(move |db| db.segment(sid)).await.unwrap().unwrap();
+    assert_eq!(seg.goalies.unwrap().nets, 1);
+
     let r = app.post(&goalies, &[("spot", "none")]).await;
     assert!(app.get(r.redirect()).await.body.contains("removed"));
 

@@ -26,7 +26,7 @@
 use crate::board;
 use crate::diagram::{LEGEND_H, LEGEND_W, LegendEntry};
 use crate::drill::equipment_summary;
-use crate::practice::{GOALIE_WARMUP, Plan, Segment};
+use crate::practice::{Plan, Segment};
 use crate::svg::{FONT, colour as c, n, text};
 use std::fmt::Write;
 use std::sync::{Arc, OnceLock};
@@ -478,8 +478,8 @@ fn strip_lines(plan: &Plan, seg: &Segment) -> Vec<Vec<(String, String)>> {
         None if k > 1 => facts.push(("Rotation".into(), "None set".into())),
         None => {}
     }
-    if seg.goalies.is_some() {
-        facts.push(("Goalies".into(), GOALIE_WARMUP.into()));
+    if let Some(g) = seg.goalies {
+        facts.push(("Goalies".into(), g.describe().into()));
     }
     let eq = plan.segment_equipment(seg);
     if !eq.is_empty() {

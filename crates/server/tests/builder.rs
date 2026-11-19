@@ -209,6 +209,17 @@ async fn the_library_cards_suggest_and_link_back_to_the_practice() {
         "key points for the preview"
     );
 
+    // A placed drill's name opens it as a whole page (not the builder's
+    // in-place swap) and comes back to the practice too.
+    let station_link = page
+        .split("class=\"station-drill\"")
+        .nth(1)
+        .and_then(|s| s.split("</a>").next())
+        .expect("the placed drill's link");
+    // (The station holds the team's copy of the drill, so its own id.)
+    assert!(station_link.contains("/drills/") && station_link.contains(&format!("?from={p}\"")));
+    assert!(station_link.contains(r#"hx-boost="false""#));
+
     // Editing from the card comes back to the practice.
     let edit = format!("/drills/{battles}?from={p}");
     assert!(card("Battles").contains(&edit.replace('&', "&amp;")));

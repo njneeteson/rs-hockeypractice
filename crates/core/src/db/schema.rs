@@ -174,8 +174,13 @@ CREATE TABLE practice_history (
 CREATE INDEX practice_history_practice ON practice_history(practice_id, id);
 "#;
 
+/// V9: a goalie warm-up can use one net (one goalie) instead of two.
+const V9: &str = r#"
+ALTER TABLE segments ADD COLUMN goalie_nets INTEGER NOT NULL DEFAULT 2;
+"#;
+
 /// Ordered migrations; index + 1 is the resulting schema version.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
 
 /// Versions whose migration rebuilds a table that others reference, so it
 /// runs with foreign keys off (SQLite's documented way to change a table's

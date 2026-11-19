@@ -102,27 +102,43 @@ pub struct Segment {
 }
 
 /// A goalie warm-up beside a part's drills: two nets side by side with a
-/// goalie in each, and a coach in front shooting. It is placed anywhere on
-/// the practice's ice, usually in a corner or along the boards in the
-/// neutral zone, wherever it is out of the drills' way.
+/// goalie in each (or one net and one goalie), and a coach in front shooting.
+/// It is placed anywhere on the practice's ice, usually in a corner or along
+/// the boards in the neutral zone, wherever it is out of the drills' way.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GoalieWarmup {
-    /// The point between the two nets' goal lines.
+    /// The point between the two nets' goal lines (the net's, with one).
     pub x: f32,
     pub y: f32,
     /// The direction the nets face (towards the coach), in degrees: 0° faces
     /// +x (like the left goal), 90° faces down the page.
     pub rot: f32,
+    /// How many nets, each with a goalie: 1 or 2.
+    pub nets: u8,
 }
 
-/// How the strip describes a goalie warm-up.
-pub const GOALIE_WARMUP: &str = "warm-up with a coach shooting (2 nets)";
-
 impl GoalieWarmup {
+    /// The usual warm-up: two nets.
+    pub const NETS: u8 = 2;
+
+    /// How the strip describes it.
+    pub fn describe(self) -> &'static str {
+        if self.nets == 1 {
+            "warm-up with a coach shooting (1 net)"
+        } else {
+            "warm-up with a coach shooting (2 nets)"
+        }
+    }
+
     /// Spots coaches usually pick, as (key, label, placement). On half ice
     /// only the spots on that half.
     pub fn presets(ice: PracticeIce) -> Vec<(&'static str, &'static str, GoalieWarmup)> {
-        let g = |x, y, rot| GoalieWarmup { x, y, rot };
+        let g = |x, y, rot| GoalieWarmup {
+            x,
+            y,
+            rot,
+            nets: Self::NETS,
+        };
         let mut v = vec![
             ("left-top", "Left end, top corner", g(20.0, 20.0, 45.0)),
             (
@@ -166,11 +182,11 @@ impl GoalieWarmup {
         v
     }
 
-    /// The preset this placement matches, if any.
+    /// The preset this placement matches, if any (whatever its nets).
     pub fn preset_key(self, ice: PracticeIce) -> Option<&'static str> {
         Self::presets(ice)
             .into_iter()
-            .find(|(_, _, g)| *g == self)
+            .find(|(_, _, g)| (g.x, g.y, g.rot) == (self.x, self.y, self.rot))
             .map(|(k, _, _)| k)
     }
 
@@ -184,6 +200,10 @@ impl GoalieWarmup {
         anyhow::ensure!(
             f.contains(self.x, self.y),
             "Put the goalie warm-up on the practice's ice."
+        );
+        anyhow::ensure!(
+            (1..=2).contains(&self.nets),
+            "A goalie warm-up has one or two nets."
         );
         self.x = (self.x * 2.0).round() / 2.0;
         self.y = (self.y * 2.0).round() / 2.0;
@@ -222,26 +242,30 @@ impl GoalieWarmup {
         };
         // Compact: nets side by side 9 ft apart, goalies in the crease, the
         // coach 12 ft out. About 19 × 17 ft in all, so it fits between drills.
+        // With one net it sits on the centre line, facing the coach.
         let [px, py] = p((13.5, 2.5));
-        Diagram {
-            items: vec![
+        let mut items = if self.nets == 1 {
+            vec![net((0.0, 0.0)), player((2.5, 0.0), "G")]
+        } else {
+            vec![
                 net((0.0, -4.5)),
                 net((0.0, 4.5)),
                 player((2.5, -4.5), "G"),
                 player((2.5, 4.5), "G"),
-                player((12.0, 0.0), "C"),
-                Item::Pucks { x: px, y: py },
-            ],
-        }
+            ]
+        };
+        items.extend([player((12.0, 0.0), "C"), Item::Pucks { x: px, y: py }]);
+        Diagram { items }
     }
 
     /// A rough outline of the warm-up on the rink (for grabbing it on screen).
     pub fn outline(self) -> [[f32; 2]; 4] {
+        let w = if self.nets == 1 { 5.0 } else { 8.5 };
         [
-            self.at(-4.0, -8.5),
-            self.at(15.0, -8.5),
-            self.at(15.0, 8.5),
-            self.at(-4.0, 8.5),
+            self.at(-4.0, -w),
+            self.at(15.0, -w),
+            self.at(15.0, w),
+            self.at(-4.0, w),
         ]
     }
 
@@ -460,8 +484,8 @@ impl Plan {
                 }
             }
         }
-        if seg.goalies.is_some() {
-            *totals.entry(Equipment::Nets).or_default() += 2;
+        if let Some(g) = seg.goalies {
+            *totals.entry(Equipment::Nets).or_default() += u32::from(g.nets);
         }
         sorted(totals)
     }

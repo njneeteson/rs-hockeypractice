@@ -28,9 +28,7 @@ use localapp_core::db::{DrillFilter, PracticeSummary};
 use localapp_core::development::{Composition, Level, Verdict, closer_by};
 use localapp_core::drill::{Category, Drill, equipment_summary};
 use localapp_core::owner::{Library, MemberId};
-use localapp_core::practice::{
-    GOALIE_WARMUP, GoalieWarmup, PlacedSlot, Plan, PracticeFields, Segment, Team,
-};
+use localapp_core::practice::{GoalieWarmup, PlacedSlot, Plan, PracticeFields, Segment, Team};
 use localapp_core::rink::{End, IceSize, Layout, MAX_LANES, PracticeIce};
 use maud::{Markup, html};
 use serde::Deserialize;
@@ -561,7 +559,11 @@ fn station_list(cx: &Ctx, plan: &Plan, seg: &Segment, library: &[Drill]) -> Mark
                     }
                     @if let Some(d) = p.drill {
                         div class="station-drill" {
-                            a href=(cx.url(&format!("/drills/{}", d.id))) { (d.name) }
+                            // Leaves the builder: an ordinary page load, not
+                            // the builder's in-place swap it would inherit.
+                            a class="station-edit" hx-boost="false"
+                                href=(cx.url(&format!("/drills/{}?from={}", d.id, seg.practice_id)))
+                                title={ "Edit “" (d.name) "”" } { (d.name) }
                             span class="muted small" { " · " (seg.station_minutes()) " min · " (d.category.label()) }
                             (split_bar(d.focus))
                         }
@@ -635,8 +637,8 @@ fn drill_select(cx: &Ctx, action: &str, library: &[Drill], p: &PlacedSlot) -> Ma
     }
 }
 
-/// The goalie warm-up: none, or two nets with goalies and a coach at a spot
-/// along the boards. With JavaScript it can also be dragged on the rink.
+/// The goalie warm-up: none, or one or two nets with goalies and a coach at a
+/// spot along the boards. With JavaScript it can also be dragged on the rink.
 fn goalie_row(cx: &Ctx, plan: &Plan, seg: &Segment) -> Markup {
     let action = cx.url(&format!("/segments/{}/goalies", seg.id));
     let ice = plan.practice.ice;
@@ -664,12 +666,19 @@ fn goalie_row(cx: &Ctx, plan: &Plan, seg: &Segment) -> Markup {
                 }
                 button type="submit" class="small no-js-only" { "Set" }
             }
-            @if seg.goalies.is_some() {
+            @if let Some(g) = seg.goalies {
+                form method="post" action=(action) class="inline-form" {
+                    select name="nets" aria-label="Nets" data-autosubmit {
+                        option value="2" selected[g.nets == 2] { "2 nets, 2 goalies" }
+                        option value="1" selected[g.nets == 1] { "1 net, 1 goalie" }
+                    }
+                    button type="submit" class="small no-js-only" { "Set" }
+                }
                 (turn(-45, "⟲", "Turn left"))
                 (turn(45, "⟳", "Turn right"))
                 span class="muted small js-only" { "Drag it on the rink to move it; drag its blue handle (or press R while moving it) to turn it." }
             } @else {
-                span class="muted small" { "Two nets with goalies and a coach, out of the drills' way." }
+                span class="muted small" { "One or two nets with goalies and a coach, out of the drills' way." }
             }
         }
     }
@@ -780,7 +789,7 @@ fn segment_card(cx: &Ctx, b: &Builder<'_>, i: usize) -> Markup {
                 div class="strip" {
                     span { strong { "Ice: " } (seg.layout.label()) }
                     @if let Some(r) = seg.rotation_text() { span { strong { "Rotation: " } (r) } }
-                    @if seg.goalies.is_some() { span { strong { "Goalies: " } (GOALIE_WARMUP) } }
+                    @if let Some(g) = seg.goalies { span { strong { "Goalies: " } (g.describe()) } }
                     @if !eq.is_empty() { span { strong { "Equipment: " } (equipment_summary(&eq)) } }
                     @if !seg.notes.is_empty() { span { strong { "Notes: " } (seg.notes) } }
                 }
