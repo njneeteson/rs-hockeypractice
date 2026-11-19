@@ -149,31 +149,77 @@ pub fn composition_panel(c: &Composition, targets: Option<Split>, guide: &str) -
     }
 }
 
-/// The drill form's five percentage fields (`focus_<level>`), in 5% steps.
-pub fn focus_fields(split: Option<Split>, guide: &str) -> Markup {
-    html! {
-        div class="focus-fields" data-focus {
-            @for l in Level::ALL {
-                label class="field" {
-                    span class="field-label" {
-                        span class={ "swatch lvl-" (l.key()) } {}
-                        (l.label()) " " (tip(l.about()))
+/// Five percentage fields, one per level (`<prefix><level>`), in 5% steps.
+/// Empty or untouched boxes are 0. With JavaScript they show a running total
+/// and a Normalize button that scales what's entered to add up to 100%.
+pub struct SplitInputs<'a> {
+    /// `"focus_"` (a drill) or `"target_"` (a team's targets).
+    pub prefix: &'a str,
+    pub values: [u8; 5],
+    /// The development guide, linked under the fields.
+    pub guide: Option<&'a str>,
+    /// A `data-implies` for each box (typing a target picks "our own").
+    pub implies: Option<&'a str>,
+    /// Each level's explanation as a tip beside its name.
+    pub tips: bool,
+}
+
+impl SplitInputs<'_> {
+    pub fn render(&self) -> Markup {
+        html! {
+            div class="split-inputs" data-focus {
+                div class="focus-fields" {
+                    @for l in Level::ALL {
+                        label class="field" {
+                            span class="field-label" {
+                                span class={ "swatch lvl-" (l.key()) } {}
+                                (l.label())
+                                @if self.tips { " " (tip(l.about())) }
+                            }
+                            input type="number" name={ (self.prefix) (l.key()) } min="0" max="100"
+                                step=(Split::STEP) value=(self.values[l.index()])
+                                data-implies=[self.implies] data-focus-part;
+                        }
                     }
-                    input type="number" name={ "focus_" (l.key()) } min="0" max="100"
-                        step=(Split::STEP) required
-                        value=[split.map(|s| s.get(*l))] data-focus-part;
+                }
+                p class="small" {
+                    span class="js-only" {
+                        "Total: " strong data-focus-total { "–" } "%. "
+                        button type="button" class="small" data-focus-normalize
+                            title="Scale the numbers so they add up to 100%, in steps of 5" { "Normalize" }
+                        " "
+                    }
+                    "Must add up to 100%, in steps of 5; an empty box counts as 0. "
+                    @if let Some(g) = self.guide {
+                        a href=(g) target="_blank" { "What the levels mean" }
+                    }
                 }
             }
-        }
-        p class="small" {
-            span class="js-only" { "Total: " strong data-focus-total { "–" } "%. " }
-            "Must add up to 100%, in steps of 5. "
-            a href=(guide) target="_blank" { "What the levels mean" }
         }
     }
 }
 
-/// Read the drill form's `focus_<level>` fields.
+/// A split's five values, or all 0 for none.
+pub fn split_values(split: Option<Split>) -> [u8; 5] {
+    split.map_or([0; 5], |s| s.0)
+}
+
+/// What was typed in `<prefix><level>` boxes, for showing a rejected form
+/// again (anything that isn't a percentage shows as 0).
+pub fn typed_values(prefix: &str, get: impl Fn(&str) -> String) -> [u8; 5] {
+    let mut v = [0u8; 5];
+    for (i, l) in Level::ALL.iter().enumerate() {
+        v[i] = get(&format!("{prefix}{}", l.key()))
+            .trim()
+            .parse::<u8>()
+            .ok()
+            .filter(|p| *p <= 100)
+            .unwrap_or(0);
+    }
+    v
+}
+
+/// Read the drill form's `focus_<level>` fields (an empty box is 0).
 pub fn parse_focus(get: impl Fn(&str) -> String) -> Result<Split, String> {
     let mut parts = [0u8; 5];
     let mut any = false;

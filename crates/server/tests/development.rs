@@ -68,6 +68,32 @@ async fn drills_must_say_how_their_time_splits() {
         drill(&mut app, "95%", &short).await,
         StatusCode::UNPROCESSABLE_ENTITY
     );
+    // What was typed comes back in the boxes (the rest as 0).
+    let mut form = vec![
+        ("name", "95%"),
+        ("category", "passing"),
+        ("ice", "quarter"),
+        ("minutes", "8"),
+        ("diagram", DIAGRAM),
+    ];
+    form.extend_from_slice(&short);
+    let body = app.post(&url("/drills"), &form).await.body;
+    let value = |level: &str| {
+        body.split(&format!("name=\"focus_{level}\""))
+            .nth(1)
+            .and_then(|s| s.split("value=\"").nth(1))
+            .and_then(|s| s.split('"').next())
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(
+        [value("technical"), value("individual"), value("strategy")],
+        ["50", "45", "0"]
+    );
+    assert!(
+        body.contains("data-focus-normalize"),
+        "the Normalize button"
+    );
     let steps = [("focus_technical", "52"), ("focus_individual", "48")];
     assert_eq!(
         drill(&mut app, "Odd steps", &steps).await,
@@ -87,6 +113,25 @@ async fn drills_must_say_how_their_time_splits() {
     let page = app.get(&url(&format!("/drills/{id}"))).await.body;
     assert!(page.contains(r#"name="focus_team_tactics""#));
     assert!(page.contains(r#"value="30""#));
+
+    // Only one box filled and the others left empty: they count as 0.
+    let id = drill_id(
+        &mut app,
+        "Edges",
+        &[
+            ("focus_technical", "100"),
+            ("focus_individual", ""),
+            ("focus_team_tactics", ""),
+            ("focus_team_play", ""),
+            ("focus_strategy", ""),
+        ],
+    )
+    .await;
+    assert!(id > 0);
+    // A new drill's boxes start at 0, and none is required.
+    let blank = app.get(&url("/drills/new")).await.body;
+    assert!(blank.contains(r#"name="focus_strategy" min="0" max="100" step="5" value="0""#));
+    assert!(!blank.contains("required data-focus-part"));
     let list = app.get(&url("/drills")).await.body;
     assert!(list.contains("Team tactics 30%"), "the card's split bar");
 

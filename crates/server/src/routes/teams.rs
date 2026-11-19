@@ -9,14 +9,16 @@ use crate::flash;
 use crate::form;
 use crate::state::Shared;
 use crate::views::components::{Num, Text, card, empty, heading, link_button, thead};
-use crate::views::development::{GUIDE_PATH, composition_panel, parse_targets, targets_source};
+use crate::views::development::{
+    GUIDE_PATH, SplitInputs, composition_panel, parse_targets, split_values, targets_source,
+};
 use crate::views::forms::{action_button, field};
 use crate::views::{Nav, Page, page};
 use axum::extract::Path;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Form, Router};
-use localapp_core::development::{AgeDivision, Composition, Level};
+use localapp_core::development::{AgeDivision, Composition};
 use localapp_core::owner::{Library, MemberId, TeamRole};
 use maud::{Markup, html};
 use serde::Deserialize;
@@ -430,15 +432,13 @@ fn development_card(tc: &TeamCtx, so_far: (Composition, u32), all: (Composition,
                                 input type="radio" name="targets" value="custom" checked[custom];
                                 " Our own (e.g. what your association asks for):"
                             }
-                            div class="focus-fields" {
-                                @for l in Level::ALL {
-                                    label class="field" {
-                                        span class="field-label" { span class={ "swatch lvl-" (l.key()) } {} (l.label()) }
-                                        input type="number" name={ "target_" (l.key()) } min="0" max="100" step="5"
-                                            value=[targets.map(|s| s.get(*l))] data-implies="targets=custom";
-                                    }
-                                }
-                            }
+                            (SplitInputs {
+                                prefix: "target_",
+                                values: split_values(targets),
+                                guide: None,
+                                implies: Some("targets=custom"),
+                                tips: false,
+                            }.render())
                         }
                         div { button type="submit" { "Save" } }
                     }

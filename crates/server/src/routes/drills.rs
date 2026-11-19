@@ -6,7 +6,9 @@ use crate::flash;
 use crate::form;
 use crate::state::Shared;
 use crate::views::components::{card, empty, heading, legend_list, link_button, notice, svg};
-use crate::views::development::{GUIDE_PATH, focus_fields, parse_focus, split_bar};
+use crate::views::development::{
+    GUIDE_PATH, SplitInputs, parse_focus, split_bar, split_values, typed_values,
+};
 use crate::views::forms::{Live, LiveTarget, action_button, field, live_form};
 use crate::views::{Nav, Page, page};
 use axum::extract::Query;
@@ -347,7 +349,7 @@ fn drill_form(
     used: u32,
     back: &str,
     new_in: Option<Library>,
-    guide: &str,
+    focus: &SplitInputs<'_>,
     from: Option<i64>,
 ) -> Markup {
     let qty = |e: Equipment| {
@@ -402,7 +404,7 @@ fn drill_form(
                 }
             }))
             (card("Development", "How the drill's time splits across Hockey Canada's development levels. Practices add these up and compare them with the team's targets.",
-                focus_fields(f.focus, guide)))
+                focus.render()))
             (card("Diagram", "", diagram_editor(f.ice, &f.diagram, &f.name)))
             div class="grid" {
                 (card("How to run it", "Shown under the rink on the printed plan.", html! {
@@ -464,7 +466,7 @@ async fn new_page(cx: Ctx, Query(q): Query<NewQuery>) -> AppResult<Page> {
     let (back, back_label) = back_to(&cx, from, lib);
     let body = html! {
         (heading("New drill", &format!("In {name}."), link_button(&back, back_label, false)))
-        (drill_form(&cx.url("/drills"), &f, 0, &back, Some(lib), &cx.url(GUIDE_PATH), from))
+        (drill_form(&cx.url("/drills"), &f, 0, &back, Some(lib), &focus_inputs(&cx.url(GUIDE_PATH), [0; 5]), from))
     };
     Ok(page(&cx, Nav::Drills, "New drill", body))
 }
@@ -530,13 +532,26 @@ struct Rejected<'a> {
     used: u32,
     new_in: Option<Library>,
     from: Option<i64>,
+    /// The development split as typed.
+    focus: [u8; 5],
+}
+
+/// The drill form's development split boxes.
+fn focus_inputs(guide: &str, values: [u8; 5]) -> SplitInputs<'_> {
+    SplitInputs {
+        prefix: "focus_",
+        values,
+        guide: Some(guide),
+        implies: None,
+        tips: true,
+    }
 }
 
 fn rejected(cx: &Ctx, r: Rejected<'_>, f: &DrillFields, error: &str) -> Response {
     let body = html! {
         (heading(r.title, "", link_button(r.back, "← Back", false)))
         (notice("error", html! { "Not saved: " (error) }))
-        (drill_form(r.action, f, r.used, r.back, r.new_in, &cx.url(GUIDE_PATH), r.from))
+        (drill_form(r.action, f, r.used, r.back, r.new_in, &focus_inputs(&cx.url(GUIDE_PATH), r.focus), r.from))
     };
     (
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -580,6 +595,7 @@ async fn create(cx: Ctx, Form(pairs): Form<Vec<(String, String)>>) -> AppResult<
                 used: 0,
                 new_in: Some(lib),
                 from,
+                focus: typed_values("focus_", |k| field_value(&pairs, k).to_string()),
             };
             Ok(rejected(&cx, r, &f, &format!("{e:#}")))
         }
@@ -643,7 +659,7 @@ async fn edit_page(dc: DrillCtx, Query(q): Query<FromQuery>) -> AppResult<Page> 
                 strong { "Development" } " and save."
             }))
         }
-        (drill_form(&dc.url(&base), &d.fields(), used, &back, None, &dc.url(GUIDE_PATH), from))
+        (drill_form(&dc.url(&base), &d.fields(), used, &back, None, &focus_inputs(&dc.url(GUIDE_PATH), split_values(d.focus)), from))
     };
     Ok(page(&dc, Nav::Drills, &d.name, body))
 }
@@ -681,6 +697,7 @@ async fn update(dc: DrillCtx, Form(pairs): Form<Vec<(String, String)>>) -> AppRe
                 used,
                 new_in: None,
                 from,
+                focus: typed_values("focus_", |k| field_value(&pairs, k).to_string()),
             };
             Ok(rejected(&dc, r, &f, &format!("{e:#}")))
         }

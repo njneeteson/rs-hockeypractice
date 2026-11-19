@@ -99,7 +99,11 @@ Click a drill to open it, or **New drill**. A drill has:
 - **Development**: how the drill's time splits across the five development
   levels (technical skills, individual tactics, team tactics, team play,
   strategy), in 5% steps adding up to 100%. Required: a drill can't be saved
-  without it. A 2-on-1 drill might be 40 / 30 / 30 / 0 / 0. See
+  without it. A 2-on-1 drill might be 40 / 30 / 30 / 0 / 0. The boxes start
+  at 0, and one left empty counts as 0, so fill in only the levels the drill
+  works on. **Normalize** scales what you've entered to add up to 100%: type
+  rough weights such as 2 / 1 / 1 and it makes them 50 / 25 / 25. The same
+  boxes and button are on a team's own targets. See
   [Development focus](#development-focus).
 
 ![The development split on a drill](images/18-drill-development.png)

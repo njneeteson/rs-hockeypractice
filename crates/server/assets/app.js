@@ -176,14 +176,19 @@ if (window.htmx) {
   document.addEventListener("DOMContentLoaded", () => setUpToasts(document.body));
 }
 
-// The drill form's development split ([data-focus]): show the running total
-// next to it ([data-focus-total]), flagged until it makes 100%.
+// A development split ([data-focus]: a drill's split or a team's targets):
+// show the running total ([data-focus-total]), flagged until it makes 100%.
+// An empty box counts as 0 (the server reads it the same way).
+function focusValue(input) {
+  return Math.max(0, parseInt(input.value, 10) || 0);
+}
+
 function updateFocusTotal(group) {
   const total = Array.from(group.querySelectorAll("[data-focus-part]")).reduce(
-    (sum, input) => sum + (parseInt(input.value, 10) || 0),
+    (sum, input) => sum + focusValue(input),
     0,
   );
-  const out = group.parentElement && group.parentElement.querySelector("[data-focus-total]");
+  const out = group.querySelector("[data-focus-total]");
   if (out) {
     out.textContent = String(total);
     out.classList.toggle("warn-text", total !== 100);
@@ -193,6 +198,45 @@ document.addEventListener("input", (event) => {
   const group = event.target.closest("[data-focus]");
   if (group) {
     updateFocusTotal(group);
+  }
+});
+
+// Normalize ([data-focus-normalize]): scale what's entered so it adds up to
+// 100% in the boxes' steps (5%), keeping the proportions as closely as the
+// steps allow (largest remainders get the leftover steps).
+function normalizeFocus(group) {
+  const inputs = Array.from(group.querySelectorAll("[data-focus-part]"));
+  const values = inputs.map(focusValue);
+  const sum = values.reduce((a, b) => a + b, 0);
+  if (sum === 0) {
+    return;
+  }
+  const step = Number(inputs[0].step) || 5;
+  const units = Math.round(100 / step);
+  const exact = values.map((v) => (v * units) / sum);
+  const steps = exact.map(Math.floor);
+  let left = units - steps.reduce((a, b) => a + b, 0);
+  const order = exact
+    .map((e, i) => [e - Math.floor(e), i])
+    .sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (const [, i] of order) {
+    if (left <= 0) {
+      break;
+    }
+    steps[i] += 1;
+    left -= 1;
+  }
+  inputs.forEach((input, i) => {
+    input.value = String(steps[i] * step);
+    // Lets data-implies and the total react as if typed.
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-focus-normalize]");
+  const group = button && button.closest("[data-focus]");
+  if (group) {
+    normalizeFocus(group);
   }
 });
 function setUpFocus(root) {
